@@ -18,7 +18,7 @@ data Binop = Add | Sub | Mult | Less | Greater | Equal | And | Or
 
 data Exp = Var VarName
     | Value Value
-    | Binop Exp Binop Exp
+    | Binop Binop Exp Exp
     | Not Exp
     | As Exp Locals
     | Deref Exp
@@ -90,15 +90,15 @@ pilhaGetMv 0 (h : t) = Just h
 pilhaGetMv loc (h : t) = pilhaGetMv (loc - 1) t
 
 --- Obtém o valor sintático da pilha de valores
-pilhaGet :: Loc -> Pilha -> Exp
+pilhaGet :: Loc -> Pilha -> Value
 
 pilhaGet (loc, Pilha) pilha = maybe 
     (error "Local inexistente na memória")
-    (\value -> Value (case value of  --se pilhaGetMv retorna Just, aplica essa função
+    (\case --se pilhaGetMv retorna Just, aplica essa função
         Ploc ploc -> Loc ploc
         Pnum number -> Number number 
         _ -> error "falha na conversão"
-    ))
+    )
     (pilhaGetMv loc pilha)
 
 --- Coloca o PiValue no Loc da Pilha
@@ -138,62 +138,109 @@ pilhaPop _ [] = []
 
 --- Memória
 
-data MemValues = Mloc Loc | Mnum Number | MBot | MNull deriving (Show, Eq)
+data MemValues = Mloc Loc | Mnum Number | Mbot | Mnull deriving (Show, Eq)
 type Mem = [MemValues]
 
 --- Obtém o valor de memória da memória
-memGetMv :: Loc -> Mem -> Maybe MemValues
+memGetMv :: Int -> Mem -> Maybe MemValues
 
 memGetMv _ [] = Nothing
-memGetMv (0, Memoria) (h : t) = Just h
-memGetMv (loc, Memoria) (h : t) = memGetMv (loc - 1, Pilha) t
+memGetMv 0 (h : t) = Just h
+memGetMv loc (h : t) = memGetMv (loc - 1) t
 
 --- Obtém o valor sintático da memória
-memGet :: Loc -> Mem -> Exp
+memGet :: Loc -> Mem -> Value
 
-memGet loc mem = maybe 
+memGet (loc, Memoria) mem = maybe 
     (error "Local inexistente na memória")
-    (\value -> Value (case value of 
-        Mloc loc -> Loc loc
+    (\case 
+        Mloc loc' -> Loc loc'
         Mnum number -> Number number 
         _ -> error "falha na conversão"
-    ))
+    )
     (memGetMv loc mem)
 
 --- Coloca o MemValue no Loc da Memória
-memInsert :: Loc -> MemValues -> Mem -> Mem
+memInsertMv :: Int -> MemValues -> Mem -> Mem
 
-memInsert (0, Memoria) value (_ : t) = value : t 
-memInsert (loc, Memoria) value (h : t) = h : memInsert (loc - 1, Memoria) value t 
-memInsert _ _ [] = error "Index Out of bounds na memória"
+memInsertMv 0 value (_ : t) = value : t
+memInsertMv loc value (h : t) = h : memInsertMv (loc - 1) value t
+memInsertMv _ _ [] = error "Index Out of bounds na memória"
+
+--- Coloca um Value na memória
+--- quase que exatamente igual a pilhaSet
+memInsert :: Loc -> Value -> Mem -> Mem
+memInsert (loc, Pilha) value mem = 
+    let isValid = maybe False (\case 
+            Mnull -> False
+            _ -> True) 
+            (memGetMv loc mem) 
+    in if isValid then 
+        memInsertMv loc (case value of 
+            Number number -> Mnum number
+            Loc loc -> Mloc loc
+        ) mem
+    else
+        error "Inserção em local de memória inválido"
+
 
 
 --- Insere n valores de memória apartir de l em mem
-memSet :: Loc -> Int -> MemValues -> Mem -> Mem
+--- loc -> size -> value -> memoria
+memSet :: Int -> Int -> MemValues -> Mem -> Mem
 -- finished
-memSet (0, Memoria) 0 _ mem = mem    
+memSet 0 0 _ mem = mem    
 -- se chegou no local, começa trocar a cabeça por mv
-memSet (0, Memoria) n mv (h : t) = mv : memSet (0, Memoria) (n - 1) mv t 
+memSet 0 n mv (h : t) = mv : memSet 0 (n - 1) mv t 
 -- se chegou no local e não tem nada, insere mv no fim
-memSet (0, Memoria) n mv [] = mv : memSet (0, Memoria) (n - 1) mv []     
+memSet 0 n mv [] = mv : memSet 0 (n - 1) mv []     
 -- se n chegou no local, segue a lista
-memSet (loc, Memoria) n mv (h : t) = h : memSet (loc - 1, Memoria) n mv t  
+memSet loc n mv (h : t) = h : memSet (loc - 1) n mv t  
 -- se chegou ao fim da lista, mas n no local, insere MNull até chegar no local
-memSet (loc, Memoria) n mv [] = MNull : memSet (loc - 1, Memoria) n mv []  
+memSet loc n mv [] = Mnull : memSet (loc - 1) n mv []  
 
 --- encontra Int espaço consecutivos vagos na memória Mem, retornando Loc.
 --- a função pode retornar um Loc = size(Mem), nesse caso, 
 --- a memória não contém espaço vago no momento e deve ser expandida
-loc :: Int -> Mem -> Loc
-loc = loc' 0 (1, Memoria)
+findMem :: Int -> Mem -> Loc
+findMem = findMem' 0 (1, Memoria)
 
-loc' :: Int -> Loc -> Int -> Mem -> Loc
-loc' count (l, Memoria) size m = case memGetMv (l + count, Memoria) m of
+findMem' :: Int -> Loc -> Int -> Mem -> Loc
+findMem' count (l, Memoria) size m = case memGetMv (l + count) m of
     Nothing -> (l, Memoria) -- chegou no fim da memória
     --- se, com uma célula vaga, achou o espaço, retorna l, se não, aumenta count e segue pro próximo
-    Just MNull -> if size == count then
-        (l, Memoria) else loc' (count + 1) (l, Memoria) size m
-    Just _ -> loc' 0 (l + 1, Memoria) size m
+    Just Mnull -> if size == count then
+        (l, Memoria) else findMem' (count + 1) (l, Memoria) size m
+    Just _ -> findMem' 0 (l + 1, Memoria) size m
+
+
+--- Função auxiliar para a avaliação das expressões aritméticas e booleanas
+
+binop :: Binop -> Value -> Value -> Value
+--- no binop, ele só converte os número e ajeita o tipo de saída
+--- nota-se que não existe lp + lm ou vice versa
+binop op (Number n1) (Number n2) = Number (binop' op n1 n2)
+binop op (Number num) (Loc (loc, Pilha)) = Loc (binop' op num loc, Pilha)
+binop op (Loc (loc, Pilha)) (Number num) = Loc (binop' op num loc, Pilha)
+binop op (Number num) (Loc (loc, Memoria)) = Loc (binop' op num loc, Memoria)
+binop op (Loc (loc, Memoria)) (Number num) = Loc (binop' op num loc, Memoria)
+
+binop' :: Binop -> Number -> Number -> Number
+
+binop' Add n1 n2 = n1 + n2
+binop' Sub n1 n2 = n1 - n2
+binop' Mult n1 n2 = n1 * n2
+binop' Less n1 n2 = if n1 < n2 then 1 else 0
+binop' Greater n1 n2 = if n1 > n2 then 1 else 0
+binop' Equal n1 n2 = if n1 == n2 then 1 else 0
+binop' And n1 n2 = if (n1 /= 0) && (n2 /= 0) then 1 else 0
+binop' Or n1 n2 = if (n1 /= 0) || (n2 /= 0) then 1 else 0
+
+--- Converte valor para o seu número base
+toNumber :: Value -> Number 
+toNumber value = case value of
+    Number num -> num
+    Loc (loc , _) -> loc
 
 
 --- Semântica operacional
@@ -256,11 +303,175 @@ expStep (Let nome size, funcs, env, pilha, mem) =
     expStep (Value (Loc (topoPilha, Pilha)), funcs, env', pilha', mem)
 
 --- Atribui-deref-pilha
---- *lp := v
-expStep (Assign (Deref (Value (Loc (local, Pilha)))) (Value v), funcs, env, pilha, mem) = 
-    let pilha' = pilhaSet (local, Pilha) v pilha in 
-    expStep (Value v, funcs, env, pilha', mem)
+--- *lp := value
+expStep (Assign (Deref (Value (Loc (local, Pilha)))) (Value value), funcs, env, pilha, mem) = 
+    let pilha' = pilhaSet (local, Pilha) value pilha in 
+    expStep (Value value, funcs, env, pilha', mem)
 
+--- Atribui-deref-mem
+--- *lm := value
+expStep (Assign (Deref (Value (Loc (local, Memoria)))) (Value value), funcs, env, pilha, mem) = 
+    let mem' = memInsert (local, Memoria) value mem in 
+    expStep (Value value, funcs, env, pilha, mem')
+
+--- Atribui-var
+--- x := value
+expStep (Assign (Var varName) (Value value), funcs, env, pilha, mem) = 
+    let local = envGet varName env in
+    let pilha' = pilhaSet local value pilha in 
+    expStep (Value value, funcs, env, pilha', mem)
+
+--- Atribui-deref-right-step
+expStep (Assign (Deref (Value (Loc loc))) exp, funcs, env, pilha, mem) = 
+    let (exp', _, env', pilha', mem') = expStep (exp, funcs, env, pilha, mem) in
+        expStep (Assign (Deref (Value (Loc loc))) exp', funcs, env', pilha', mem')
+
+--- Atribui-var-right-step
+expStep (Assign (Var varName) exp, funcs, env, pilha, mem) = 
+    let (exp', _, env', pilha', mem') = expStep (exp, funcs, env, pilha, mem) in
+        expStep (Assign (Var varName) exp', funcs, env', pilha', mem')
+
+--- Atribui-deref-left-step
+expStep (Assign (Deref exp1) exp2, funcs, env, pilha, mem) = 
+    let (exp1', _, env', pilha', mem') = expStep (exp1, funcs, env, pilha, mem) in
+        expStep (Assign (Deref exp1') exp2, funcs, env', pilha', mem')
+
+
+--- ======================
+--- Manipulação de memória
+--- ======================
+
+--- Free
+expStep (Free (Value (Loc (loc, Memoria))) (Value (Number num)), funcs, env, pilha, mem) = 
+    let mem' = memSet loc num Mnull mem in 
+    expStep (Value (Number num), funcs, env, pilha, mem')
+
+--- Free-right-step
+expStep (Free (Value (Loc (loc, Memoria))) exp, funcs, env, pilha, mem) = 
+    let (exp', _, env', pilha', mem') = expStep (exp, funcs, env, pilha, mem) in
+        expStep (Free (Value (Loc (loc, Memoria))) exp', funcs, env', pilha', mem')
+
+--- Free-left-step
+expStep (Free exp1 exp2, funcs, env, pilha, mem) = 
+    let (exp1', _, env', pilha', mem') = expStep (exp1, funcs, env, pilha, mem) in
+        expStep (Free exp1' exp2, funcs, env', pilha', mem')
+
+--- Malloc
+expStep (Malloc (Value (Number amount)), funcs, env, pilha, mem) = 
+    let (loc, Memoria) = findMem amount mem in
+    let mem' = memSet loc amount Mbot mem in 
+    expStep (Value (Loc (loc, Memoria)), funcs, env, pilha, mem')
+
+--- Malloc-step
+expStep (Malloc exp, funcs, env, pilha, mem) = 
+    let (exp', _, env', pilha', mem') = expStep (exp, funcs, env, pilha, mem) in
+        expStep (Malloc exp', funcs, env', pilha', mem')
+
+
+--- ==================================
+--- Expressões Aritméticas e Booleanas
+--- ==================================
+
+--- As
+--- Obtém o número interno do valor e torna ele uma localização do tipo local
+expStep (As (Value value) local, funcs, env, pilha, mem) = 
+    let number = toNumber value
+    in expStep (Value (Loc (number, local)), funcs, env, pilha, mem)
+
+--- As-step
+expStep (As exp local, funcs, env, pilha, mem) = 
+    let (exp', _, env', pilha', mem') = expStep (exp, funcs, env, pilha, mem) in
+        expStep (As exp' local, funcs, env', pilha', mem')
+
+--- Not
+expStep (Not (Value value), funcs, env, pilha, mem) = 
+    let result = Number (if toNumber value /= 0 then 0 else 1)
+    in expStep (Value result, funcs, env, pilha, mem)
+
+--- Not-step
+expStep (Not exp, funcs, env, pilha, mem) = 
+    let (exp', _, env', pilha', mem') = expStep (exp, funcs, env, pilha, mem) in
+        expStep (Not exp', funcs, env', pilha', mem')
+
+--- Binop
+expStep (Binop op (Value v1) (Value v2), funcs, env, pilha, mem) = 
+    let result = binop op v1 v2 
+    in expStep (Value result, funcs, env, pilha, mem)
+
+--- Binop-rigth-step
+expStep (Binop op (Value v) exp, funcs, env, pilha, mem) = 
+    let (exp', _, env', pilha', mem') = expStep (exp, funcs, env, pilha, mem) in
+        expStep (Binop op (Value v) exp', funcs, env', pilha', mem')
+
+--- Binop-left-step
+expStep (Binop op exp1 exp2, funcs, env, pilha, mem) = 
+    let (exp1', _, env', pilha', mem') = expStep (exp1, funcs, env, pilha, mem) in
+        expStep (Binop op exp1' exp2, funcs, env', pilha', mem')
+
+
+--- Deref-memoria
+expStep (Deref (Value (Loc (local, Memoria))), funcs, env, pilha, mem) = 
+    let value = memGet (local, Memoria) mem in 
+    expStep (Value value, funcs, env, pilha, mem)
+
+--- Deref-pilha
+expStep (Deref (Value (Loc (local, Pilha))), funcs, env, pilha, mem) = 
+    let value = pilhaGet (local, Pilha) pilha in 
+    expStep (Value value, funcs, env, pilha, mem)
+
+--- Ref
+expStep (Ref (Var varName), funcs, env, pilha, mem) = 
+    let loc = envGet varName env in 
+    expStep (Value (Loc loc), funcs, env, pilha, mem)
+
+--- Var
+expStep (Var varName, funcs, env, pilha, mem) = 
+    let loc = envGet varName env in 
+    let value = pilhaGet loc pilha in
+    expStep (Value value, funcs, env, pilha, mem)
+
+
+--- ==================================
+--- Expressões de Controle
+--- ==================================
+
+--- While
+--- converte While num if 
+expStep (While exp1 exp2, funcs, env, pilha, mem) = 
+    expStep (If exp1 (Comp exp2 (While exp1 exp2)) (Value (Number 0)), funcs, env, pilha, mem)
+
+--- If
+expStep (If (Value cond) exp1 exp2, funcs, env, pilha, mem) = 
+    if toNumber cond /= 0 then
+        expStep (exp1, funcs, env, pilha, mem) --true
+    else
+        expStep (exp2, funcs, env, pilha, mem) --false
+
+--- If-step
+expStep (If exp1 exp2 exp3, funcs, env, pilha, mem) = 
+    let (exp1', _, env', pilha', mem') = expStep (exp1, funcs, env, pilha, mem) in
+        expStep (If exp1' exp2 exp3, funcs, env', pilha', mem')
+
+
+--- ==================================
+--- Chamada de função
+--- ==================================
+
+expStep (CallFunc funcName args, funcs, env, pilha, mem) = 
+    let (declargs, body) = funcsGet funcName funcs in 
+        if length declargs /= length args then
+            error "Chamada de função com o número errado de argumentos"
+        else 
+            -- gera uma árvore sintática apartir do zip das listas
+            let expTree = Prelude.foldl 
+                    -- cada elemento vira um let varName[varSize]; varName := varExp
+                    (\acc ((varName, varSize), varExp) -> 
+                        Comp (Comp (Let varName varSize) (Assign (Var varName) varExp)) acc) 
+                    body 
+                    -- usa-se o reverse pois essa árvore cresce da folha a raiz, ou seja, o primeiro
+                    -- elemento da lista vai ser o último na árvore
+                    (reverse $ zip declargs args) in
+            expStep (Scope expTree, funcs, env, pilha, mem)
 
 
 -- Para a avaliação quando chega em valor
