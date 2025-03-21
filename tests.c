@@ -73,5 +73,10 @@ int main(){
 
 	printTree(tree5);
 
+	printf("\n");
+
+	printTree(tree);
+
+	printf("\n");
 	return 0;
 }

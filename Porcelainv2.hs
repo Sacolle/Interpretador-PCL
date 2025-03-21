@@ -11,10 +11,27 @@ data Locals = Pilha | Memoria
 type Loc = (Number, Locals)
 
 data Value = Number Number | Loc Loc
-    deriving (Show)
+    deriving (Eq)
+
+instance Show Value where
+    show v = case v of
+        Number n -> show n
+        Loc (loc, local) -> "("++ show loc ++ ", " ++ show local ++ ")"
+
 
 data Binop = Add | Sub | Mult | Less | Greater | Equal | And | Or 
-    deriving (Show)
+
+instance Show Binop where
+    show op = case op of
+        Add -> " + "
+        Sub -> " - "
+        Mult -> " * "
+        Less -> " < " 
+        Greater -> " > " 
+        Equal -> " = " 
+        And -> " & " 
+        Or -> " | " 
+
 
 data Exp = Var VarName
     | Value Value
@@ -34,15 +51,49 @@ data Exp = Var VarName
     | While Exp Exp
     | CallFunc FuncName [Exp]
     | Fpop Exp -- marcador de escopo de função
-    deriving (Show)
+
+
+instance Show Exp where
+    show exp = case exp of
+        Var name -> name
+        Value value -> show value
+        Binop op exp1 exp2 -> show exp1 ++ show op ++ show exp2
+        Not exp -> "!" ++ show exp
+        As exp local -> show exp ++ " as " ++ show local
+        Deref exp -> "*" ++ show exp
+        Ref name -> "&" ++ name
+        Comp exp1 exp2 -> show exp1 ++ ";\n" ++ show exp2
+        Scope exp -> "{ " ++ show exp ++" }" -- equivalente a {}
+        Pop exp -> "pop " ++ show exp 
+        Malloc exp -> "malloc( " ++ show exp ++ " )" 
+        Free exp1 exp2 -> "free( " ++ show exp1 ++ ", " ++ show exp2 ++ " )"
+        Let name num -> "let " ++ name ++ "[" ++ show num ++ "]"
+        Assign exp1 exp2 -> show exp1 ++ " := " ++ show exp2 
+        If exp1 exp2 exp3 -> "if( " ++ show exp1 ++ " )\n" ++ show exp2 ++ "\n" ++ show exp3
+        While exp1 exp2 -> "while( " ++ show exp1 ++ " )\n" ++ show exp2
+        CallFunc name exps -> name ++ "(" ++ 
+            Prelude.drop 2 (Prelude.foldl (\acc exp -> acc ++ ", " ++ show exp) "" exps) 
+            ++ ")" 
+        Fpop exp -> "Fpop " ++ show exp 
+
 
 data Function = DeclFunc FuncName [(VarName, Number)] Exp Function | Main Exp
     deriving (Show)
 
 
 --- Ambiente de nomes
-data EnvValues = Frame (Map VarName Loc) | Stop deriving(Show)
+data EnvValues = Frame (Map VarName Loc) | Stop
 type Env = [EnvValues]
+
+instance Show EnvValues where
+    show value = case value of 
+        Stop -> "Stop"
+        Frame map -> "{" ++ Prelude.drop 2 
+            (Prelude.foldl 
+                (\acc (key, value) -> acc ++ ", " ++ key ++ ":" ++ show value) 
+                "" 
+                (Data.Map.toList map)) 
+            ++ "}"
 
 --- Obter valores do ambiente de Nomes
 envGet :: VarName -> Env -> Loc
@@ -277,19 +328,19 @@ expStep :: (Exp, Funcs, Env, Pilha, Mem) -> (Exp, Funcs, Env, Pilha, Mem)
 
 --- Compose-combine
 expStep (Comp (Value _) exp, funcs, env, pilha, mem) = 
-    expStep (exp, funcs, env, pilha, mem)
+    (exp, funcs, env, pilha, mem)
 
 --- Compose-step
 expStep (Comp exp1 exp2, funcs, env, pilha, mem) = 
     let (exp1', _, env', pilha', mem') = expStep (exp1, funcs, env, pilha, mem) in
-        expStep (Comp exp1' exp2, funcs, env', pilha', mem')
+        (Comp exp1' exp2, funcs, env', pilha', mem')
 
 
 --- Escopo-init
 --- Empilha os elementos nas pilha e muda o código para Scope' 
 --- para isso ser feito só no primeiro passo
 expStep (Scope exp, funcs, env, pilha, mem) = 
-    expStep (Pop exp, funcs, Frame empty : env, pilha ++ [Pstack], mem)
+    (Pop exp, funcs, Frame empty : env, pilha ++ [Pstack], mem)
 
 --- Escopo-pop
 --- remove-se o frame do topo do ambiente de nomes e 
@@ -297,12 +348,12 @@ expStep (Scope exp, funcs, env, pilha, mem) =
 expStep (Pop (Value v), funcs, env, pilha, mem) = 
     let (_ : env') = env in -- desempilha o topo de env
     let pilha' = pilhaPop Pstack pilha in  --- remove valores até Pstack
-    expStep (Value v, funcs, env', pilha', mem)
+    (Value v, funcs, env', pilha', mem)
 
 --- Escopo-step
 expStep (Pop exp, funcs, env, pilha, mem) = 
     let (exp', _, env', pilha', mem') = expStep (exp, funcs, env, pilha, mem) in
-        expStep (Pop exp', funcs, env', pilha', mem')
+        (Pop exp', funcs, env', pilha', mem')
 
 
 --- ====================
@@ -314,41 +365,41 @@ expStep (Let nome size, funcs, env, pilha, mem) =
     let topoPilha = length pilha in
     let env' = envSet nome (topoPilha, Pilha) env in -- coloca nome -> local no env de nomes
     let pilha' = pilha ++ replicate size Pbot in -- empilha size Pbot na pilha (tamanho da variável)
-    expStep (Value (Loc (topoPilha, Pilha)), funcs, env', pilha', mem)
+    (Value (Loc (topoPilha, Pilha)), funcs, env', pilha', mem)
 
 --- Atribui-deref-pilha
 --- *lp := value
 expStep (Assign (Deref (Value (Loc (local, Pilha)))) (Value value), funcs, env, pilha, mem) = 
     let pilha' = pilhaSet (local, Pilha) value pilha in 
-    expStep (Value value, funcs, env, pilha', mem)
+    (Value value, funcs, env, pilha', mem)
 
 --- Atribui-deref-mem
 --- *lm := value
 expStep (Assign (Deref (Value (Loc (local, Memoria)))) (Value value), funcs, env, pilha, mem) = 
     let mem' = memInsert (local, Memoria) value mem in 
-    expStep (Value value, funcs, env, pilha, mem')
+    (Value value, funcs, env, pilha, mem')
 
 --- Atribui-var
 --- x := value
 expStep (Assign (Var varName) (Value value), funcs, env, pilha, mem) = 
     let local = envGet varName env in
     let pilha' = pilhaSet local value pilha in 
-    expStep (Value value, funcs, env, pilha', mem)
+    (Value value, funcs, env, pilha', mem)
 
 --- Atribui-deref-right-step
 expStep (Assign (Deref (Value (Loc loc))) exp, funcs, env, pilha, mem) = 
     let (exp', _, env', pilha', mem') = expStep (exp, funcs, env, pilha, mem) in
-        expStep (Assign (Deref (Value (Loc loc))) exp', funcs, env', pilha', mem')
+        (Assign (Deref (Value (Loc loc))) exp', funcs, env', pilha', mem')
 
 --- Atribui-var-right-step
 expStep (Assign (Var varName) exp, funcs, env, pilha, mem) = 
     let (exp', _, env', pilha', mem') = expStep (exp, funcs, env, pilha, mem) in
-        expStep (Assign (Var varName) exp', funcs, env', pilha', mem')
+        (Assign (Var varName) exp', funcs, env', pilha', mem')
 
 --- Atribui-deref-left-step
 expStep (Assign (Deref exp1) exp2, funcs, env, pilha, mem) = 
     let (exp1', _, env', pilha', mem') = expStep (exp1, funcs, env, pilha, mem) in
-        expStep (Assign (Deref exp1') exp2, funcs, env', pilha', mem')
+        (Assign (Deref exp1') exp2, funcs, env', pilha', mem')
 
 
 --- ======================
@@ -358,28 +409,28 @@ expStep (Assign (Deref exp1) exp2, funcs, env, pilha, mem) =
 --- Free
 expStep (Free (Value (Loc (loc, Memoria))) (Value (Number num)), funcs, env, pilha, mem) = 
     let mem' = memSet loc num Mnull mem in 
-    expStep (Value (Number num), funcs, env, pilha, mem')
+    (Value (Number num), funcs, env, pilha, mem')
 
 --- Free-right-step
 expStep (Free (Value (Loc (loc, Memoria))) exp, funcs, env, pilha, mem) = 
     let (exp', _, env', pilha', mem') = expStep (exp, funcs, env, pilha, mem) in
-        expStep (Free (Value (Loc (loc, Memoria))) exp', funcs, env', pilha', mem')
+        (Free (Value (Loc (loc, Memoria))) exp', funcs, env', pilha', mem')
 
 --- Free-left-step
 expStep (Free exp1 exp2, funcs, env, pilha, mem) = 
     let (exp1', _, env', pilha', mem') = expStep (exp1, funcs, env, pilha, mem) in
-        expStep (Free exp1' exp2, funcs, env', pilha', mem')
+        (Free exp1' exp2, funcs, env', pilha', mem')
 
 --- Malloc
 expStep (Malloc (Value (Number amount)), funcs, env, pilha, mem) = 
     let (loc, Memoria) = findMem amount mem in
     let mem' = memSet loc amount Mbot mem in 
-    expStep (Value (Loc (loc, Memoria)), funcs, env, pilha, mem')
+    (Value (Loc (loc, Memoria)), funcs, env, pilha, mem')
 
 --- Malloc-step
 expStep (Malloc exp, funcs, env, pilha, mem) = 
     let (exp', _, env', pilha', mem') = expStep (exp, funcs, env, pilha, mem) in
-        expStep (Malloc exp', funcs, env', pilha', mem')
+        (Malloc exp', funcs, env', pilha', mem')
 
 
 --- ==================================
@@ -389,65 +440,65 @@ expStep (Malloc exp, funcs, env, pilha, mem) =
 --- As
 --- Obtém o número interno do valor e torna ele uma localização do tipo local
 expStep (As (Value value) local, funcs, env, pilha, mem) = 
-    let number = toNumber value
-    in expStep (Value (Loc (number, local)), funcs, env, pilha, mem)
+    let number = toNumber value in
+        (Value (Loc (number, local)), funcs, env, pilha, mem)
 
 --- As-step
 expStep (As exp local, funcs, env, pilha, mem) = 
     let (exp', _, env', pilha', mem') = expStep (exp, funcs, env, pilha, mem) in
-        expStep (As exp' local, funcs, env', pilha', mem')
+        (As exp' local, funcs, env', pilha', mem')
 
 --- Not
 expStep (Not (Value value), funcs, env, pilha, mem) = 
     let result = Number (if toNumber value /= 0 then 0 else 1)
-    in expStep (Value result, funcs, env, pilha, mem)
+    in (Value result, funcs, env, pilha, mem)
 
 --- Not-step
 expStep (Not exp, funcs, env, pilha, mem) = 
     let (exp', _, env', pilha', mem') = expStep (exp, funcs, env, pilha, mem) in
-        expStep (Not exp', funcs, env', pilha', mem')
+        (Not exp', funcs, env', pilha', mem')
 
 --- Binop
 expStep (Binop op (Value v1) (Value v2), funcs, env, pilha, mem) = 
     let result = binop op v1 v2 
-    in expStep (Value result, funcs, env, pilha, mem)
+    in (Value result, funcs, env, pilha, mem)
 
 --- Binop-rigth-step
 expStep (Binop op (Value v) exp, funcs, env, pilha, mem) = 
     let (exp', _, env', pilha', mem') = expStep (exp, funcs, env, pilha, mem) in
-        expStep (Binop op (Value v) exp', funcs, env', pilha', mem')
+        (Binop op (Value v) exp', funcs, env', pilha', mem')
 
 --- Binop-left-step
 expStep (Binop op exp1 exp2, funcs, env, pilha, mem) = 
     let (exp1', _, env', pilha', mem') = expStep (exp1, funcs, env, pilha, mem) in
-        expStep (Binop op exp1' exp2, funcs, env', pilha', mem')
+        (Binop op exp1' exp2, funcs, env', pilha', mem')
 
 
 --- Deref-memoria
 expStep (Deref (Value (Loc (local, Memoria))), funcs, env, pilha, mem) = 
     let value = memGet (local, Memoria) mem in 
-    expStep (Value value, funcs, env, pilha, mem)
+        (Value value, funcs, env, pilha, mem)
 
 --- Deref-pilha
 expStep (Deref (Value (Loc (local, Pilha))), funcs, env, pilha, mem) = 
     let value = pilhaGet (local, Pilha) pilha in 
-    expStep (Value value, funcs, env, pilha, mem)
+        (Value value, funcs, env, pilha, mem)
 
 --- Deref-step
 expStep (Deref exp, funcs, env, pilha, mem) = 
     let (exp', _, env', pilha', mem') = expStep (exp, funcs, env, pilha, mem) in
-        expStep (Deref exp, funcs, env', pilha', mem')
+        (Deref exp', funcs, env', pilha', mem')
 
 --- Ref
 expStep (Ref varName, funcs, env, pilha, mem) = 
     let loc = envGet varName env in 
-    expStep (Value (Loc loc), funcs, env, pilha, mem)
+        (Value (Loc loc), funcs, env, pilha, mem)
 
 --- Var
 expStep (Var varName, funcs, env, pilha, mem) = 
     let loc = envGet varName env in 
     let value = pilhaGet loc pilha in
-    expStep (Value value, funcs, env, pilha, mem)
+        (Value value, funcs, env, pilha, mem)
 
 
 --- ==================================
@@ -457,19 +508,19 @@ expStep (Var varName, funcs, env, pilha, mem) =
 --- While
 --- converte While num if 
 expStep (While exp1 exp2, funcs, env, pilha, mem) = 
-    expStep (If exp1 (Comp exp2 (While exp1 exp2)) (Value (Number 0)), funcs, env, pilha, mem)
+    (If exp1 (Comp exp2 (While exp1 exp2)) (Value (Number 0)), funcs, env, pilha, mem)
 
 --- If
 expStep (If (Value cond) exp1 exp2, funcs, env, pilha, mem) = 
     if toNumber cond /= 0 then
-        expStep (exp1, funcs, env, pilha, mem) --true
+        (exp1, funcs, env, pilha, mem) --true
     else
-        expStep (exp2, funcs, env, pilha, mem) --false
+        (exp2, funcs, env, pilha, mem) --false
 
 --- If-step
 expStep (If exp1 exp2 exp3, funcs, env, pilha, mem) = 
     let (exp1', _, env', pilha', mem') = expStep (exp1, funcs, env, pilha, mem) in
-        expStep (If exp1' exp2 exp3, funcs, env', pilha', mem')
+        (If exp1' exp2 exp3, funcs, env', pilha', mem')
 
 
 --- ==================================
@@ -496,18 +547,18 @@ expStep (CallFunc funcName args, funcs, env, pilha, mem) =
                             args
                             ))
                         in
-            expStep (Fpop $ Scope expTree, funcs, Stop : env, pilha ++ [Pfunc], mem)
+            (Fpop $ Scope expTree, funcs, Stop : env, pilha ++ [Pfunc], mem)
 
 --- Remove as estruturas de controle das pilhas no fim da função
 expStep (Fpop (Value v), funcs, env, pilha, mem) = 
     let (_ : env') = env in -- desempilha o topo de env
     let pilha' = pilhaPop Pfunc pilha in  --- remove valores até Pfunc
-    expStep (Value v, funcs, env', pilha', mem)
+    (Value v, funcs, env', pilha', mem)
 
 --- Escopo-step
 expStep (Fpop exp, funcs, env, pilha, mem) = 
     let (exp', _, env', pilha', mem') = expStep (exp, funcs, env, pilha, mem) in
-        expStep (Fpop exp', funcs, env', pilha', mem')
+        (Fpop exp', funcs, env', pilha', mem')
 
 
 -- Para a avaliação quando chega em valor
@@ -580,8 +631,8 @@ trees = DeclFunc "newNode" [("val", 1)]
                         (Var "tree")
                         (
                             If (Binop Greater (Var "val") (Deref (Var "tree")))
-                                (Assign (Deref (Binop Add (Var "tree") (Value (Number 1)))) (CallFunc "get" [Binop Add (Var "tree") (Value (Number 1)), Var "val"]))
-                                (Assign (Deref (Binop Add (Var "tree") (Value (Number 2)))) (CallFunc "get" [Binop Add (Var "tree") (Value (Number 2)), Var "val"]))
+                                (Assign (Deref (Binop Add (Var "tree") (Value (Number 1)))) (CallFunc "get" [Deref (Binop Add (Var "tree") (Value (Number 1))), Var "val"]))
+                                (Assign (Deref (Binop Add (Var "tree") (Value (Number 2)))) (CallFunc "get" [Deref (Binop Add (Var "tree") (Value (Number 2))), Var "val"]))
                         )
                 )
         ))
@@ -589,16 +640,13 @@ trees = DeclFunc "newNode" [("val", 1)]
         Let "tree" 1 .>
         Assign (Var "tree") (As (Value (Number 0)) Memoria) 
         .>
-        Assign (Var "tree") (CallFunc "insert" [Var "tree", Value (Number 5)]) 
-        .>
-        Assign (Var "tree") (CallFunc "insert" [Var "tree", Value (Number 1)]) 
-        {-.>
+        Assign (Var "tree") (CallFunc "insert" [Var "tree", Value (Number 5)]) .>
+        Assign (Var "tree") (CallFunc "insert" [Var "tree", Value (Number 1)]) .>
         Assign (Var "tree") (CallFunc "insert" [Var "tree", Value (Number 7)]) .>
         Assign (Var "tree") (CallFunc "insert" [Var "tree", Value (Number 4)]) .>
 
         Let "branch" 1 .>
-        Assign (Var "tree") (CallFunc "get" [Var "tree", Value (Number 7)]) 
-        -}
+        Assign (Var "branch") (CallFunc "get" [Var "tree", Value (Number 7)]) 
     )))
 
 
@@ -612,6 +660,36 @@ testfunc = DeclFunc "0" [("var1", 1), ("var2", 1)]
 --- pode-se omitir o scope e adicionar espaço diretamente nos mapas, 
 --- q assim não será deletado no fim do programa
 
+execLoop :: IO (Exp, Funcs, Env, Pilha, Mem) -> IO (Exp, Funcs, Env, Pilha, Mem)
+
+execLoop state = do
+    (exp, funcs, env, pilha, mem) <- state --obtêm o passo de execução
+    let (exp', _, env', pilha', mem') = expStep (exp, funcs, env, pilha, mem)
+    putStrLn "\nProgram"
+    print exp'
+    putStrLn "Estados"
+    print env'
+    print pilha'
+    print mem'
+    case exp' of 
+        Value _ -> return (exp', funcs, env', pilha', mem')
+        _ -> do 
+            putStrLn "Aperte qualquer tecla para o próximo passo"
+            _  <- getChar
+            execLoop (return (exp', funcs, env', pilha', mem'))
+
+execFull state = do
+    (exp, funcs, env, pilha, mem) <- state --obtêm o passo de execução
+    let (exp', _, env', pilha', mem') = expStep (exp, funcs, env, pilha, mem)
+    case exp' of 
+        Value _ -> do
+            print env'
+            print pilha'
+            print mem'
+            return (exp', funcs, env', pilha', mem')
+        _ -> execFull (return (exp', funcs, env', pilha', mem'))
+
+
 main = do 
     {-
     print programComposition
@@ -622,8 +700,8 @@ main = do
     --print ex3
     -}
     let (Main exp, funcs) = functionStep (trees, empty)
-    --print exp
+    print exp
+    execFull $ return (exp, funcs, [Frame empty], [Pstack], [])
     --print exp
     --print (Main exp, funcs, env, pilha, mem) 
     --let (res, _, env, pilha, mem) = expStep (exp, funcs, [Frame empty], [Pstack], [])
-    print (expStep (exp, funcs, [Frame empty], [Pstack], []))
