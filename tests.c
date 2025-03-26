@@ -18,31 +18,19 @@ struct Btree* newNode(int val){
 }
 
 struct Btree* insert(struct Btree* tree, int val){
-	if(tree == NULL){
-		return newNode(val);
-	}
+	if(tree == NULL) return newNode(val);
 
-	if(val > tree->x){
-		tree->right = insert(tree->right, val);
-	}else{
-		tree->left = insert(tree->left, val);
-	}
-
+	if(val > tree->x) tree->right = insert(tree->right, val);
+	else tree->left = insert(tree->left, val);
 	return tree;
 }
 
 struct Btree* get(struct Btree* tree, int val){
-	if(tree == NULL){
-		return NULL;
-	}
+	if(tree == NULL) return NULL;
 
-	if(val == tree->x){
-		return tree;
-	}else if(val > tree->x){
-		return get(tree->right, val);
-	}else{
-		return get(tree->left, val);
-	}
+	if(val == tree->x) return tree;
+    else if(val > tree->x) return get(tree->right, val);
+	else return get(tree->left, val);
 }
 
 void printTree(struct Btree* tree){

@@ -77,7 +77,7 @@ instance Show Exp where
         Fpop exp -> "Fpop " ++ show exp 
 
 
-data Function = DeclFunc FuncName [(VarName, Number)] Exp Function | Main Exp
+data Function = DeclFunc FuncName [VarName] Exp Function | Main Exp
     deriving (Show)
 
 
@@ -113,7 +113,7 @@ envSet nome loc (Frame frame : env) = Frame (Data.Map.insert nome loc frame) : e
 
 
 --- Ambiente de Funções
-type FuncBody = ([(VarName, Number)], Exp)
+type FuncBody = ([VarName], Exp)
 type Funcs = Map FuncName FuncBody
 
 --- Obtem o corpo e args da função
@@ -134,12 +134,19 @@ funcsSet = Data.Map.insert
 data PiValues = Ploc Loc | Pnum Number | Pbot | Pnull | Pstack | Pfunc deriving (Show, Eq)
 type Pilha = [PiValues]
 
+
 --- Obtém o valor da pilha da pilha de valores
+--- indexa com (length pilha) o topo e 0 a base.
 pilhaGetMv :: Int -> Pilha -> Maybe PiValues
 
-pilhaGetMv _ [] = Nothing
-pilhaGetMv 0 (h : t) = Just h
-pilhaGetMv loc (h : t) = pilhaGetMv (loc - 1) t
+pilhaGetMv loc pilha = pilhaGetMv' loc (length pilha - 1) pilha
+
+pilhaGetMv' :: Int -> Int -> Pilha -> Maybe PiValues
+
+pilhaGetMv' _ _ [] = Nothing
+pilhaGetMv' loc size (h : t) = if loc == size then Just h
+    else pilhaGetMv' loc (size - 1) t
+
 
 --- Obtém o valor sintático da pilha de valores
 pilhaGet :: Loc -> Pilha -> Value
@@ -156,11 +163,15 @@ pilhaGet (loc, Pilha) pilha = maybe
 pilhaGet (_, Memoria) _ = error "chamada da função pilhaGet com um endereço de memória"
 
 --- Coloca o PiValue no Loc da Pilha
-pilhaSetMv :: Number -> PiValues -> Pilha -> Pilha
+pilhaSetMv :: Int -> PiValues -> Pilha -> Pilha
 
-pilhaSetMv 0 value (_ : t) = value : t
-pilhaSetMv loc value (h : t) = h : pilhaSetMv (loc - 1) value t
-pilhaSetMv _ _ [] = error "Index Out of bounds na pilha"
+pilhaSetMv loc value pilha = pilhaSetMv' loc (length pilha - 1) value pilha
+
+pilhaSetMv' :: Int -> Int -> PiValues -> Pilha -> Pilha
+
+pilhaSetMv' _ _ _ [] = error "Index Out of bounds na pilha"
+pilhaSetMv' loc size value (h : t) = if loc == size then value : t
+    else h : pilhaSetMv' loc (size - 1) value t
 
 --- Coloca o Value no Loc da Pilha
 pilhaSet :: Loc -> Value -> Pilha -> Pilha
@@ -186,15 +197,16 @@ pilhaSet (_, Memoria) _ _= error "chamada da função pilhaSet com um endereço 
     
 
 --- Remove o topo da pilha até o valor value, esse sempre será Pstack ou Pfunc
---- Dado uma pilha [v, v, Stack, p, p]
---- O resultado de um pilhaPop deve ser [v, v]
---- Esse double reverse é porque:
---- dado a pilha [v, v, Stack, p, Stack, p], deve-se remover o último stack apenas, então inverte
---- pega o tail de quando o topo for Stack e inverte de volta
+-- considere value como Pstack
+--Topo
+-- V
+-- 4 : 7 : Pstack : 8 : 0 : nil - não é Pstack, remove e continua
+-- 7 : Pstack : 8 : 0 : nil - não é Pstack, remove e continua
+-- Pstack : 8 : 0 : nil para e retorna 8 : 0 : nil
+
 pilhaPop :: PiValues -> Pilha -> Pilha
-pilhaPop value pilha = reverse $ pilhaPop' value $ reverse pilha
-pilhaPop' value (h : t) = if h /= value then pilhaPop' value t else t
-pilhaPop' _ [] = []
+pilhaPop value (h : t) = if h /= value then pilhaPop value t else t
+pilhaPop _ [] = []
 
 
 --- Memória
@@ -340,7 +352,7 @@ expStep (Comp exp1 exp2, funcs, env, pilha, mem) =
 --- Empilha os elementos nas pilha e muda o código para Scope' 
 --- para isso ser feito só no primeiro passo
 expStep (Scope exp, funcs, env, pilha, mem) = 
-    (Pop exp, funcs, Frame empty : env, pilha ++ [Pstack], mem)
+    (Pop exp, funcs, Frame empty : env, Pstack : pilha, mem)
 
 --- Escopo-pop
 --- remove-se o frame do topo do ambiente de nomes e 
@@ -364,7 +376,7 @@ expStep (Pop exp, funcs, env, pilha, mem) =
 expStep (Let nome size, funcs, env, pilha, mem) = 
     let topoPilha = length pilha in
     let env' = envSet nome (topoPilha, Pilha) env in -- coloca nome -> local no env de nomes
-    let pilha' = pilha ++ replicate size Pbot in -- empilha size Pbot na pilha (tamanho da variável)
+    let pilha' = replicate size Pbot ++ pilha  in -- empilha size Pbot na pilha (tamanho da variável)
     (Value (Loc (topoPilha, Pilha)), funcs, env', pilha', mem)
 
 --- Atribui-deref-pilha
@@ -535,8 +547,8 @@ expStep (CallFunc funcName args, funcs, env, pilha, mem) =
             -- gera uma árvore sintática apartir do zip das listas
             let expTree = Prelude.foldl 
                     -- cada elemento vira um let varName[varSize]; varName := varExp
-                    (\acc ((varName, varSize), value) -> 
-                        Comp (Comp (Let varName varSize) (Assign (Var varName) value)) acc) 
+                    (\acc (varName, value) -> 
+                        Comp (Comp (Let varName 1) (Assign (Var varName) value)) acc) 
                     body 
                     -- usa-se o reverse pois essa árvore cresce da folha a raiz, ou seja, o primeiro
                     -- elemento da lista vai ser o último na árvore
@@ -547,7 +559,7 @@ expStep (CallFunc funcName args, funcs, env, pilha, mem) =
                             args
                             ))
                         in
-            (Fpop $ Scope expTree, funcs, Stop : env, pilha ++ [Pfunc], mem)
+            (Fpop $ Scope expTree, funcs, Stop : env, Pfunc : pilha, mem)
 
 --- Remove as estruturas de controle das pilhas no fim da função
 expStep (Fpop (Value v), funcs, env, pilha, mem) = 
@@ -578,14 +590,12 @@ programComposition = Value (Number 0) .> Value (Number 2) .> Value (Number 4)
 programLetAssign = Scope (Let "x" 1 .> Assign (Var "x") (Value (Number 5)))
 
 
-ex1 = Main $ Let "a" 1 .> 
-    Assign (Var "a") (Value (Number 3)) .>
-    Assign (Var "a") (Binop Add (Var "a") (Value (Number 1))) .>
-    Let "b" 1 .>
-    Assign (Var "b") (Malloc (Var "a")) .>
-    While (Var "a") (
-        Assign (Deref (Binop Add (Var "b") (Binop Sub (Var "a") (Value (Number 1))))) (Var "a") .>
-        Assign (Var "a") (Binop Sub (Var "a") (Value (Number 1)))
+ex1 = Main $ Let "i" 1 .> 
+    Assign (Var "i") (Value (Number 3)) .>
+    Let "m" 1 .>
+    Assign (Var "m") (Malloc (Var "i")) .>
+    While (Binop Less  (Value (Number (-1))) (Assign (Var "i") (Binop Sub (Var "i") (Value (Number 1))))) (
+        Assign (Deref (Binop Add (Var "m") (Var "i"))) (Var "i")
     )
 
 ex2 = Main $
@@ -593,7 +603,7 @@ ex2 = Main $
     Assign (Var "x") (Value (Number 1)) .>
     Assign (Deref (Binop Add (Ref "x") (Value (Number 1)))) (Value (Number 2))
 
-ex3 = DeclFunc "square" [("x", 1)] (Binop Mult (Var "x") (Var "x")) $ Main $
+ex3 = DeclFunc "square" ["x"] (Binop Mult (Var "x") (Var "x")) $ Main $
     Let "y" 1 .> 
     Assign (Var "y") (Value (Number 5)) .>
     Let "x" 1 .>
@@ -602,7 +612,11 @@ ex3 = DeclFunc "square" [("x", 1)] (Binop Mult (Var "x") (Var "x")) $ Main $
         CallFunc "square" [Binop Add (Var "y") (Value (Number 1))]
     )
 
-trees = DeclFunc "newNode" [("val", 1)] 
+ex4 = Main $
+    Assign (Deref (Let "x" 1)) (Value (Number 3)) .> 
+    Var "x"
+
+trees = DeclFunc "newNode" ["val"] 
     (Scope (Let "node" 1 .>
     Assign (Var "node") (Malloc (Value (Number 3))) .>
     Assign (Deref (Var "node")) (Var "val") .>
@@ -610,7 +624,7 @@ trees = DeclFunc "newNode" [("val", 1)]
     Assign (Deref (Binop Add (Var "node") (Value (Number 2)))) (As (Value (Number 0)) Memoria) .>
     Var "node"
     )) 
-    (DeclFunc "insert" [("tree", 1), ("val", 1)] 
+    (DeclFunc "insert" ["tree", "val"] 
         (Scope (
             If (Binop Equal (Var "tree") (Value (Number 0)))
                 (CallFunc "newNode" [Var "val"])
@@ -622,17 +636,17 @@ trees = DeclFunc "newNode" [("val", 1)]
                     Var "tree"
                 )
         ))
-    (DeclFunc "get" [("tree", 1), ("val", 1)] 
+    (DeclFunc "get" ["tree", "val"] 
         (Scope (
             If (Binop Equal (Var "tree") (Value (Number 0)))
-                (Value (Number 0))
+                (As (Value (Number 0)) Memoria)
                 (
                     If (Binop Equal (Var "val") (Deref (Var "tree")))
                         (Var "tree")
                         (
                             If (Binop Greater (Var "val") (Deref (Var "tree")))
-                                (Assign (Deref (Binop Add (Var "tree") (Value (Number 1)))) (CallFunc "get" [Deref (Binop Add (Var "tree") (Value (Number 1))), Var "val"]))
-                                (Assign (Deref (Binop Add (Var "tree") (Value (Number 2)))) (CallFunc "get" [Deref (Binop Add (Var "tree") (Value (Number 2))), Var "val"]))
+                                (CallFunc "get" [Deref (Binop Add (Var "tree") (Value (Number 1))), Var "val"])
+                                (CallFunc "get" [Deref (Binop Add (Var "tree") (Value (Number 2))), Var "val"])
                         )
                 )
         ))
@@ -650,7 +664,7 @@ trees = DeclFunc "newNode" [("val", 1)]
     )))
 
 
-testfunc = DeclFunc "0" [("var1", 1), ("var2", 1)] 
+testfunc = DeclFunc "0" ["var1", "var2"] 
     (Scope (Binop Add (Var "var1") (Var "var2"))) $ Main $
         Let "x" 1 .>
         Assign (Var "x")  (CallFunc "0" [Value (Loc (2, Memoria)), Value (Number 3)]) .>
@@ -698,7 +712,11 @@ main = do
     print "====="
     print (expStep (programLetAssign, empty, [], [], []))
     --print ex3
+    let (Main exp, funcs) = functionStep (trees, empty)
+    print exp
+    execFull $ return (exp, funcs, [Frame empty], [Pstack], [])
     -}
+
     let (Main exp, funcs) = functionStep (trees, empty)
     print exp
     execFull $ return (exp, funcs, [Frame empty], [Pstack], [])
