@@ -1,6 +1,8 @@
 {-# LANGUAGE LambdaCase #-}
 
-import Data.Map
+module Porcelain where
+
+import Data.Map ( Map, insert, empty, lookup, toList )
 
 type Number = Int
 type VarName = String
@@ -719,7 +721,7 @@ main = do
 
     let (Main exp, funcs) = functionStep (trees, empty)
     print exp
-    execFull $ return (exp, funcs, [Frame empty], [Pstack], [])
+    execLoop $ return (exp, funcs, [Frame empty], [Pstack], [])
     --print exp
     --print (Main exp, funcs, env, pilha, mem) 
     --let (res, _, env, pilha, mem) = expStep (exp, funcs, [Frame empty], [Pstack], [])
