@@ -59,7 +59,7 @@ instance Show Exp where
     show exp = case exp of
         Var name -> name
         Value value -> show value
-        Binop op exp1 exp2 -> show exp1 ++ show op ++ show exp2
+        Binop op exp1 exp2 -> "(" ++ show exp1 ++ show op ++ show exp2 ++ ")"
         Not exp -> "!" ++ show exp
         As exp local -> show exp ++ " as " ++ show local
         Deref exp -> "*" ++ show exp
