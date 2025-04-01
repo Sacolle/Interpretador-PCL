@@ -7,6 +7,7 @@ import Data.List (foldl')
 import Lexer (Token (..))
 import Data.Bifunctor (first, second)
 import Porcelain (FuncName, VarName, Number, Exp(..), Binop(..), Value (Number), Locals (..), Function(..))
+import Data.Maybe (listToMaybe)
 
 newtype Parser a = Parser {runParser :: [Token] -> [(a, [Token])]}
 
@@ -92,7 +93,7 @@ functions = funcDeclaration <|> funcMain
     where
         funcMain = Main <$> (token Lexer.Let *> token OpenParentesis *> token CloseParentesis *> expr) 
         funcDeclaration = DeclFunc <$> 
-            funcName <*> 
+            (token Lexer.Let *> funcName) <*> 
             (parensed (sepBy1 varName (token Comma)) <|> emptyParentesis) <*>
             expr <*>
             functions
@@ -101,13 +102,27 @@ functions = funcDeclaration <|> funcMain
 
 
 expr :: Parser Exp
-expr = binExp <|> declareExp <|> assignExp
---ifExp <|> whileExp <|> compExp <|> scopeExp <|> declareExp 
+expr = binExp
 
 
 binExp :: Parser Exp
-binExp = boolExp
+binExp = composeExp
     where 
+        composeExp = opsR (Porcelain.Comp <$ token Lexer.Semicolon) whileExp
+        --here
+
+        -- if causa problema de ambiguidade
+        -- if (1) 1 else 0;3 deve ser ter o parse (if (1) (1) else 0);3
+        -- mas atualmente ele também realiza if (1) (1) else (0;3)
+        whileExp = (Porcelain.While <$> (token Lexer.While *> parensed whileExp) <*> whileExp) <|> ifExp
+
+        ifExp = (Porcelain.If <$> 
+            (token Lexer.If *> parensed ifExp) <*>
+            ifExp <*> 
+            (token Lexer.Else *> ifExp)
+            ) <|> assignExp
+
+        assignExp = opsL (Porcelain.Assign <$ token Lexer.Assign) boolExp
         boolExp = opsL booleanOperators compExp
             where 
                 booleanOperators = 
@@ -127,7 +142,7 @@ binExp = boolExp
 
 
 unaryExp :: Parser Exp
-unaryExp = notExp <|> asExp <|> derefExp <|> refExp <|> factor
+unaryExp = notExp <|> asExp <|> derefExp <|> refExp <|> scopeExp <|> factor
     where
         notExp = Not <$> (token Exclamation *> factor)
 
@@ -141,11 +156,13 @@ unaryExp = notExp <|> asExp <|> derefExp <|> refExp <|> factor
     
         derefExp = Deref <$> (token Star *> factor)
         refExp = Ref <$> (token Ampersand *> varName) -- ref só contem nome de var
+        scopeExp = Scope <$> (token OpenBrace *> expr <* token CloseBrace)
 
 
 factor :: Parser Exp
-factor = memCalls <|> callExp <|> nameExp <|> littExp <|> parensed expr
+factor = declareExp <|> memCalls <|> callExp <|> nameExp <|> littExp <|> parensed expr
     where 
+        declareExp = Porcelain.Let <$> (token Lexer.Let *> varName) <*> (token OpenBracket *> number <* token CloseBracket)
         memCalls = mallocExp <|> freeExp
             where
                 mallocExp = Porcelain.Malloc <$> (token Lexer.Malloc *> parensed expr)
@@ -160,38 +177,18 @@ factor = memCalls <|> callExp <|> nameExp <|> littExp <|> parensed expr
         nameExp = Var <$> varName 
         littExp = Value . Number <$> number
 
-ifExp :: Parser Exp
-ifExp = Porcelain.If <$> 
-    (token Lexer.If *> parensed expr) <*> 
-    expr <*> 
-    (token Lexer.Else *> expr)
+-- no artigo, depois da compilação final, aparentemente o resultado é só um elemento,
+-- dado que não foi ambiguo
+-- no meu caso, ao rodar o parser, para cada ;, o parser pode decidir parar
+-- então deve-se filtrar todos os parsers que não terminem. 
+-- tenho que ver o que fazer para isso não acontecer
 
-whileExp :: Parser Exp
-whileExp = Porcelain.While <$> 
-    (token Lexer.While *> parensed expr) <*> expr 
-
-compExp :: Parser Exp
-compExp = Porcelain.Comp <$> expr <* token Semicolon <*> expr
-
-scopeExp :: Parser Exp
-scopeExp = Scope <$> (token OpenBrace *> expr <* token CloseBrace)
-
-declareExp :: Parser Exp
-declareExp = Porcelain.Let <$> (token Lexer.Let *> varName) <*> (token OpenBracket *> number <* token CloseBracket)
-
-assignExp :: Parser Exp
-assignExp = Porcelain.Assign <$> expr <*> (token Lexer.Assign *> expr)
-
-{-
 data ParseError = FailedParse | AmbiguousParse [(Function, [Token])] deriving(Show)
 
 parser :: [Token] -> Either ParseError Function
 parser input = case runParser functions input of
     [] -> Left FailedParse
-    [(res, _)] -> Right res
-    tooMany -> Left (AmbiguousParse tooMany)
--}
-
---data ParseError = FailedParse | AmbiguousParse [(Exp, [Token])] deriving(Show)
-
-parser = runParser expr
+    parses -> let fullparses = filter (\(_, list) -> null list) parses in
+        case fullparses of
+            [(res,_)] -> Right res
+            tooMany ->  Left $ AmbiguousParse tooMany

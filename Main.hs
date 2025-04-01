@@ -2,28 +2,25 @@ import Lexer(Token, lexer, hack)
 import System.Environment (getArgs)
 import Data.Maybe (listToMaybe)
 import Parser (parser)
+import Porcelain (stepRun, fullRun)
 
 
--- The arguments we'll need for our program
-
-parseArgs :: [String] -> Maybe (FilePath, String)
-
-parseArgs (file : rest) = do
-  outputFile <- listToMaybe rest
-  return (file, outputFile)
-
-parseArgs _ = Nothing
+run:: String -> String -> IO()
+run "full" content = 
+    case lexer content of
+        Left err -> do print "Lexer Error: "; print err
+        Right tokens -> case parser tokens of
+            Left err -> do print "parser Error: "; print err
+            Right ast -> fullRun ast
 
 
 main :: IO ()
 main = do
     stringArgs <- getArgs
-    case parseArgs stringArgs of
-        Nothing -> putStrLn "Unrecognized arguments"
-        Just (file, outputFile) -> do
+    case stringArgs of
+        (mode : file : _) -> do
             content <- readFile file
-            case lexer content of
-                Left err -> print err
-                Right tokens -> do print tokens; print $ parser tokens
+            run mode content
+        _ -> putStrLn "Unrecognized arguments"
 
 

@@ -8,7 +8,7 @@ let newNode(val) {
 }
 
 let insert(tree, val){
-	if (tree == 0) 
+	if (tree = 0) 
 		newNode(val)
 	else
 		if (val > *tree) *(tree + 1) := insert(*(tree + 1), val)
@@ -17,10 +17,10 @@ let insert(tree, val){
 }
 
 let get(tree, val){
-	if (tree == 0) 
+	if (tree = 0) 
 		0 as m
 	else
-		if (val == *tree)
+		if (val = *tree)
 			tree
 		else
 			if (val > *tree) get(*(tree + 1), val)

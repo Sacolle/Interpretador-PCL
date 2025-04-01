@@ -1,1 +1,40 @@
-*(let a[2])
+
+/*
+let newNode(val) {
+	let node[1];
+	node := malloc(3);
+	*node := val;
+	*(node + 1) := 0 as m;
+	*(node + 2) := 0 as m;
+	node
+}
+
+
+
+let get(tree, val){
+	if (tree == 0) 
+		0 as m
+	else
+		if (val == *tree)
+			tree
+		else
+			if (val > *tree) get(*(tree + 1), val)
+			else get(*(tree + 2), val)
+}
+*/
+/* 
+*/
+let insert(tree, val){
+	if (tree = 0) 
+		newNode(val)
+	else
+		if (val > *tree) *(tree + 1) := insert(*(tree + 1), val)
+		else *(tree + 2) := insert(*(tree + 2), val);
+		tree
+}
+let () 
+	//let tree[1];
+	//tree := 0 as m;
+	//tree := insert(tree, 4);
+	//0
+	1

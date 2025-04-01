@@ -3,6 +3,7 @@
 module Porcelain where
 
 import Data.Map ( Map, insert, empty, lookup, toList )
+import Control.Monad (void)
 
 type Number = Int
 type VarName = String
@@ -60,18 +61,18 @@ instance Show Exp where
         Var name -> name
         Value value -> show value
         Binop op exp1 exp2 -> "(" ++ show exp1 ++ show op ++ show exp2 ++ ")"
-        Not exp -> "!" ++ show exp
+        Not exp -> "!(" ++ show exp ++ ")"
         As exp local -> show exp ++ " as " ++ show local
-        Deref exp -> "*" ++ show exp
+        Deref exp -> "*(" ++ show exp ++ ")"
         Ref name -> "&" ++ name
-        Comp exp1 exp2 -> show exp1 ++ ";\n" ++ show exp2
+        Comp exp1 exp2 -> "(" ++ show exp1 ++ ");(" ++ show exp2 ++ ")"
         Scope exp -> "{ " ++ show exp ++" }" -- equivalente a {}
         Pop exp -> "pop " ++ show exp 
         Malloc exp -> "malloc( " ++ show exp ++ " )" 
         Free exp1 exp2 -> "free( " ++ show exp1 ++ ", " ++ show exp2 ++ " )"
         Let name num -> "let " ++ name ++ "[" ++ show num ++ "]"
         Assign exp1 exp2 -> show exp1 ++ " := " ++ show exp2 
-        If exp1 exp2 exp3 -> "if( " ++ show exp1 ++ " )\n" ++ show exp2 ++ "\n" ++ show exp3
+        If exp1 exp2 exp3 -> "if(" ++ show exp1 ++ ")\n(" ++ show exp2 ++ ")\nelse (" ++ show exp3 ++ ")"
         While exp1 exp2 -> "while( " ++ show exp1 ++ " )\n" ++ show exp2
         CallFunc name exps -> name ++ "(" ++ 
             Prelude.drop 2 (Prelude.foldl (\acc exp -> acc ++ ", " ++ show exp) "" exps) 
@@ -706,22 +707,10 @@ execFull state = do
         _ -> execFull (return (exp', funcs, env', pilha', mem'))
 
 
-main = do 
-    {-
-    print programComposition
-    print (expStep  (programComposition, empty, [], [], []))
-    print programLetAssign
-    print "====="
-    print (expStep (programLetAssign, empty, [], [], []))
-    --print ex3
-    let (Main exp, funcs) = functionStep (trees, empty)
-    print exp
-    execFull $ return (exp, funcs, [Frame empty], [Pstack], [])
-    -}
+fullRun f = do 
+    let (Main exp, funcs) = functionStep (f, empty)
+    void $ execFull $ return (exp, funcs, [Frame empty], [Pstack], [])
 
-    let (Main exp, funcs) = functionStep (trees, empty)
-    print exp
-    execLoop $ return (exp, funcs, [Frame empty], [Pstack], [])
-    --print exp
-    --print (Main exp, funcs, env, pilha, mem) 
-    --let (res, _, env, pilha, mem) = expStep (exp, funcs, [Frame empty], [Pstack], [])
+stepRun f = do 
+    let (Main exp, funcs) = functionStep (f, empty)
+    void $ execLoop $ return (exp, funcs, [Frame empty], [Pstack], [])
