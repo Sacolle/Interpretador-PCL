@@ -10,10 +10,11 @@ let newNode(val) {
 let insert(tree, val){
 	if (tree = 0) 
 		newNode(val)
-	else
+	else {
 		if (val > *tree) *(tree + 1) := insert(*(tree + 1), val)
 		else *(tree + 2) := insert(*(tree + 2), val);
 		tree
+	}
 }
 
 let get(tree, val){

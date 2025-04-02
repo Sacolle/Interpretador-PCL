@@ -4,14 +4,17 @@ import Data.Maybe (listToMaybe)
 import Parser (parser)
 import Porcelain (stepRun, fullRun)
 
-
 run:: String -> String -> IO()
-run "full" content = 
+run mode content = 
     case lexer content of
         Left err -> do print "Lexer Error: "; print err
         Right tokens -> case parser tokens of
             Left err -> do print "parser Error: "; print err
-            Right ast -> fullRun ast
+            Right ast -> runAst mode ast
+    where 
+        runAst "full" ast = fullRun ast
+        runAst "step" ast = stepRun ast
+        runAst _ _ = print "modo de execução não reconhecido"
 
 
 main :: IO ()

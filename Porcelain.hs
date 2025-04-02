@@ -65,11 +65,11 @@ instance Show Exp where
         As exp local -> show exp ++ " as " ++ show local
         Deref exp -> "*(" ++ show exp ++ ")"
         Ref name -> "&" ++ name
-        Comp exp1 exp2 -> "(" ++ show exp1 ++ ");(" ++ show exp2 ++ ")"
-        Scope exp -> "{ " ++ show exp ++" }" -- equivalente a {}
+        Comp exp1 exp2 -> show exp1 ++ ";\n" ++ show exp2
+        Scope exp -> "{" ++ show exp ++"}" -- equivalente a {}
         Pop exp -> "pop " ++ show exp 
-        Malloc exp -> "malloc( " ++ show exp ++ " )" 
-        Free exp1 exp2 -> "free( " ++ show exp1 ++ ", " ++ show exp2 ++ " )"
+        Malloc exp -> "malloc(" ++ show exp ++ ")" 
+        Free exp1 exp2 -> "free(" ++ show exp1 ++ ", " ++ show exp2 ++ ")"
         Let name num -> "let " ++ name ++ "[" ++ show num ++ "]"
         Assign exp1 exp2 -> show exp1 ++ " := " ++ show exp2 
         If exp1 exp2 exp3 -> "if(" ++ show exp1 ++ ")\n(" ++ show exp2 ++ ")\nelse (" ++ show exp3 ++ ")"
