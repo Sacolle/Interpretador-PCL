@@ -1,0 +1,69 @@
+/* vec
+size;
+cap;
+list
+*/
+
+let newVec(vec) {
+	*vec := 0;
+	*(vec + 1) := 4;
+	*(vec + 2) := malloc(4);
+	vec
+}
+
+let push(vec, val){
+	if (*vec = *(vec + 1)){
+		let newCap[1];
+		newCap := *(vec + 1) * 2;
+		let newMem[1];
+		newMem := malloc(newCap);
+
+		// copy the memory
+		let i[1];
+		i := 0;
+		while(i < *vec){
+			*(newMem + i) := *(*(vec + 2) + i);
+			i := i + 1
+		};
+
+		free(*(vec + 2), *(vec + 1));
+
+		*(vec + 1) := newCap;
+
+		*(vec + 2) := newMem;
+		1
+	}
+	else {1};
+
+	*(*(vec + 2) + *vec) := val;
+	*vec := *vec + 1;
+	1
+}
+
+
+let start(vec) *(vec + 2)
+
+
+let end(vec) *(vec + 2) + *vec
+
+
+let () 
+	let vec[3];
+	newVec(&vec);
+	push(&vec, 3);
+	push(&vec, 7);
+	push(&vec, 9);
+	push(&vec, 2);
+	push(&vec, 9);
+
+	//double the vec
+
+	let ptr[1];
+	let end[1];
+	ptr := start(&vec);
+	end := end(&vec);
+	while(ptr < end){
+		push(&vec, *ptr);
+		ptr := ptr + 1
+	};
+	0

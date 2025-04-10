@@ -1,0 +1,4 @@
+let ()
+	*(let a[1]) := malloc(2);
+	malloc(2);
+	free(a, 2)

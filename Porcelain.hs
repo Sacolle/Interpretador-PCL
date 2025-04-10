@@ -159,7 +159,7 @@ pilhaGet (loc, Pilha) pilha = maybe
     (\case --se pilhaGetMv retorna Just, aplica essa função
         Ploc ploc -> Loc ploc
         Pnum number -> Number number 
-        _ -> error "falha na conversão de pilha"
+        val -> error ("Conversão de memória inválida.\nTentativa de converter: " ++ show val)
     )
     (pilhaGetMv loc pilha)
 
@@ -232,7 +232,7 @@ memGet (loc, Memoria) mem = maybe
     (\case 
         Mloc loc' -> Loc loc'
         Mnum number -> Number number 
-        _ -> error "falha na conversão de memória"
+        val -> error ("Conversão de memória inválida.\nTentativa de converter: " ++ show val)
     )
     (memGetMv loc mem)
 
@@ -303,6 +303,8 @@ binop op (Number num) (Loc (loc, Pilha)) = Loc (binop' op num loc, Pilha)
 binop op (Loc (loc, Pilha)) (Number num) = Loc (binop' op num loc, Pilha)
 binop op (Number num) (Loc (loc, Memoria)) = Loc (binop' op num loc, Memoria)
 binop op (Loc (loc, Memoria)) (Number num) = Loc (binop' op num loc, Memoria)
+binop op (Loc (loc1, Memoria)) (Loc (loc2, Memoria)) = Loc (binop' op loc1 loc2, Memoria)
+binop op (Loc (loc1, Pilha)) (Loc (loc2, Pilha)) = Loc (binop' op loc1 loc2, Pilha)
 
 binop' :: Binop -> Number -> Number -> Number
 
