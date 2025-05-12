@@ -181,7 +181,7 @@ token = whiteSpace <|> keyword <|> operators <|> literals <|> names
                 intLiterals = IntLit . read <$> some (satisfies isDigit)
         
         names :: Lexer Token
-        names = Name <$> some (satisfies isAlphaNum)
+        names = Name <$> some (satisfies (liftA2 (||) isAlphaNum ('_' ==)))
 
 {-
 Lexer [Token] :: String -> Either LexerErro ([Token],String)

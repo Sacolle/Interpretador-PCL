@@ -1,0 +1,59 @@
+
+let strlen(string) {
+	let i[1];
+	i := 0;
+	while(*(string + i) > 0) i := i + 1;
+	i
+}
+
+let sanitize_input(user_supplied_string){
+	let string_size[1];
+	string_size := strlen(user_supplied_string);
+	let dst_buf[1];
+	dst_buf := malloc(4 * 5); //MAX_SIZE hardcoded como 5 pois não tem métodos de inicialização de lista
+	if(6 < string_size){
+		*(0 as m) //uso de deref do ponteiro nulo como uma forma tosca de die
+	} else 0;
+	let dst_index[1];
+	dst_index := 0;
+	let i[1];
+	i := 0;
+	while(i < string_size){
+		if(*(user_supplied_string + i) = 38){
+			*(dst_buf + dst_index) := 38; //&
+			dst_index := dst_index + 1;
+			*(dst_buf + dst_index) := 97; //a
+			dst_index := dst_index + 1;
+			*(dst_buf + dst_index) := 109; //m
+			dst_index := dst_index + 1;
+			*(dst_buf + dst_index) := 112; //p
+			dst_index := dst_index + 1;
+			*(dst_buf + dst_index) := 59; //;
+			dst_index := dst_index + 1
+		}else{
+			*(dst_buf + dst_index) := *(user_supplied_string + i);
+			dst_index := dst_index + 1
+		};
+		i := i + 1
+	};
+	*(dst_buf + dst_index) := 0;
+	dst_buf
+}
+
+
+let ()
+	let s[1];
+	s := malloc(4);
+	/*
+	*(s + 0) := 104; //h
+	*(s + 1) := 101; //e
+	*(s + 2) := 121; //y
+	*(s + 3) := 0;
+	*/
+
+	*(s + 0) := 38; //&
+	*(s + 1) := 38; //e
+	*(s + 2) := 38; //y
+	*(s + 3) := 38; //y
+	*(s + 4) := 0;
+	sanitize_input(s)
