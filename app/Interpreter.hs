@@ -1,6 +1,6 @@
 {-# LANGUAGE LambdaCase #-}
 
-module Porcelain where
+module Interpreter where
 
 import Data.Map ( Map, insert, empty, lookup, toList )
 import Control.Monad (void)
@@ -581,6 +581,46 @@ expStep (Fpop exp, funcs, env, pilha, mem) =
 -- Para a avaliação quando chega em valor
 expStep (Value value, funcs, env, pilha, mem) = (Value value, funcs, env, pilha, mem)
 
+
+execLoop :: IO (Exp, Funcs, Env, Pilha, Mem) -> IO (Exp, Funcs, Env, Pilha, Mem)
+
+execLoop state = do
+    (exp, funcs, env, pilha, mem) <- state --obtêm o passo de execução
+    let (exp', _, env', pilha', mem') = expStep (exp, funcs, env, pilha, mem)
+    putStrLn "\nProgram"
+    print exp'
+    putStrLn "Estados"
+    print env'
+    print pilha'
+    print mem'
+    case exp' of 
+        Value _ -> return (exp', funcs, env', pilha', mem')
+        _ -> do 
+            putStrLn "Aperte qualquer tecla para o próximo passo"
+            _  <- getChar
+            execLoop (return (exp', funcs, env', pilha', mem'))
+
+execFull state = do
+    (exp, funcs, env, pilha, mem) <- state --obtêm o passo de execução
+    let (exp', _, env', pilha', mem') = expStep (exp, funcs, env, pilha, mem)
+    case exp' of 
+        Value _ -> do
+            print env'
+            print pilha'
+            print mem'
+            return (exp', funcs, env', pilha', mem')
+        _ -> execFull (return (exp', funcs, env', pilha', mem'))
+
+
+fullRun f = do 
+    let (Main exp, funcs) = functionStep (f, empty)
+    void $ execFull $ return (exp, funcs, [Frame empty], [Pstack], [])
+
+stepRun f = do 
+    let (Main exp, funcs) = functionStep (f, empty)
+    void $ execLoop $ return (exp, funcs, [Frame empty], [Pstack], [])
+
+{-
 --- Anota o operador composição como right associative
 --- pois se não, por deafult ele é left e faz a composição errada
 --- tornando a .> b.> c em Comp (Comp a b) c
@@ -593,7 +633,6 @@ exp1 .> exp2 = Comp exp1 exp2
 programComposition = Value (Number 0) .> Value (Number 2) .> Value (Number 4)
 
 programLetAssign = Scope (Let "x" 1 .> Assign (Var "x") (Value (Number 5)))
-
 
 ex1 = Main $ Let "i" 1 .> 
     Assign (Var "i") (Value (Number 3)) .>
@@ -674,45 +713,7 @@ testfunc = DeclFunc "0" ["var1", "var2"]
         Let "x" 1 .>
         Assign (Var "x")  (CallFunc "0" [Value (Loc (2, Memoria)), Value (Number 3)]) .>
         Assign (Var "x")  (CallFunc "0" [Value (Loc (7, Memoria)), Value (Number 9)]) 
-
+-}
 --- Para salvar uma computação, pode-se ao invés de começar com um (Scope e, F, [], [], [])
 --- pode-se omitir o scope e adicionar espaço diretamente nos mapas, 
 --- q assim não será deletado no fim do programa
-
-execLoop :: IO (Exp, Funcs, Env, Pilha, Mem) -> IO (Exp, Funcs, Env, Pilha, Mem)
-
-execLoop state = do
-    (exp, funcs, env, pilha, mem) <- state --obtêm o passo de execução
-    let (exp', _, env', pilha', mem') = expStep (exp, funcs, env, pilha, mem)
-    putStrLn "\nProgram"
-    print exp'
-    putStrLn "Estados"
-    print env'
-    print pilha'
-    print mem'
-    case exp' of 
-        Value _ -> return (exp', funcs, env', pilha', mem')
-        _ -> do 
-            putStrLn "Aperte qualquer tecla para o próximo passo"
-            _  <- getChar
-            execLoop (return (exp', funcs, env', pilha', mem'))
-
-execFull state = do
-    (exp, funcs, env, pilha, mem) <- state --obtêm o passo de execução
-    let (exp', _, env', pilha', mem') = expStep (exp, funcs, env, pilha, mem)
-    case exp' of 
-        Value _ -> do
-            print env'
-            print pilha'
-            print mem'
-            return (exp', funcs, env', pilha', mem')
-        _ -> execFull (return (exp', funcs, env', pilha', mem'))
-
-
-fullRun f = do 
-    let (Main exp, funcs) = functionStep (f, empty)
-    void $ execFull $ return (exp, funcs, [Frame empty], [Pstack], [])
-
-stepRun f = do 
-    let (Main exp, funcs) = functionStep (f, empty)
-    void $ execLoop $ return (exp, funcs, [Frame empty], [Pstack], [])

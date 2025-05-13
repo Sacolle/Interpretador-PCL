@@ -2,7 +2,7 @@ import Lexer(Token, lexer, hack)
 import System.Environment (getArgs)
 import Data.Maybe (listToMaybe)
 import Parser (parser)
-import Porcelain (stepRun, fullRun)
+import Interpreter (stepRun, fullRun)
 
 run:: String -> String -> IO()
 run mode content = 

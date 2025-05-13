@@ -6,7 +6,7 @@ import Control.Applicative (Alternative (..), liftA2)
 import Data.List (foldl')
 import Lexer (Token (..))
 import Data.Bifunctor (first, second)
-import Porcelain (FuncName, VarName, Number, Exp(..), Binop(..), Value (Number), Locals (..), Function(..))
+import Interpreter (FuncName, VarName, Number, Exp(..), Binop(..), Value (Number), Locals (..), Function(..))
 import Data.Maybe (listToMaybe)
 
 newtype Parser a = Parser {runParser :: [Token] -> [(a, [Token])]}
@@ -108,35 +108,35 @@ expr = binExp
 binExp :: Parser Exp
 binExp = composeExp
     where 
-        composeExp = opsR (Porcelain.Comp <$ token Lexer.Semicolon) whileExp
+        composeExp = opsR (Interpreter.Comp <$ token Lexer.Semicolon) whileExp
         --here
 
         -- if causa problema de ambiguidade
         -- if (1) 1 else 0;3 deve ser ter o parse (if (1) (1) else 0);3
         -- mas atualmente ele também realiza if (1) (1) else (0;3)
-        whileExp = (Porcelain.While <$> (token Lexer.While *> parensed whileExp) <*> whileExp) <|> ifExp
+        whileExp = (Interpreter.While <$> (token Lexer.While *> parensed whileExp) <*> whileExp) <|> ifExp
 
-        ifExp = (Porcelain.If <$> 
+        ifExp = (Interpreter.If <$> 
             (token Lexer.If *> parensed ifExp) <*>
             ifExp <*> 
             (token Lexer.Else *> ifExp)
             ) <|> assignExp
 
-        assignExp = opsL (Porcelain.Assign <$ token Lexer.Assign) boolExp
+        assignExp = opsL (Interpreter.Assign <$ token Lexer.Assign) boolExp
         boolExp = opsL booleanOperators compExp
             where 
                 booleanOperators = 
                     (Binop And <$ token Ampersand) <|> 
-                    (Binop Porcelain.Or <$ token Lexer.Or)
+                    (Binop Interpreter.Or <$ token Lexer.Or)
         compExp = opsL comparatorOperators addSubExp
             where 
                 comparatorOperators = 
-                    (Binop Porcelain.Less <$ token Lexer.Less ) <|>
-                    (Binop Porcelain.Greater <$ token Lexer.Greater ) <|>
-                    (Binop Porcelain.Equal <$ token Lexer.Equal ) 
+                    (Binop Interpreter.Less <$ token Lexer.Less ) <|>
+                    (Binop Interpreter.Greater <$ token Lexer.Greater ) <|>
+                    (Binop Interpreter.Equal <$ token Lexer.Equal ) 
         addSubExp = opsL (
-            (Binop Porcelain.Add <$ token Lexer.Add) <|> 
-            (Binop Porcelain.Sub <$ token Lexer.Sub)
+            (Binop Interpreter.Add <$ token Lexer.Add) <|> 
+            (Binop Interpreter.Sub <$ token Lexer.Sub)
             ) multExp
         multExp = opsL (Binop Mult <$ token Star) unaryExp
 
@@ -146,7 +146,7 @@ unaryExp = notExp <|> asExp <|> derefExp <|> refExp <|> scopeExp <|> factor
     where
         notExp = Not <$> (token Exclamation *> factor)
 
-        asExp = Porcelain.As <$> (factor <* token Lexer.As) <*> local
+        asExp = Interpreter.As <$> (factor <* token Lexer.As) <*> local
             where local = Parser $ \case
                     t : ts -> case t of
                         Lexer.M -> [(Memoria, ts)]
@@ -162,11 +162,11 @@ unaryExp = notExp <|> asExp <|> derefExp <|> refExp <|> scopeExp <|> factor
 factor :: Parser Exp
 factor = declareExp <|> memCalls <|> callExp <|> nameExp <|> littExp <|> parensed expr
     where 
-        declareExp = Porcelain.Let <$> (token Lexer.Let *> varName) <*> (token OpenBracket *> number <* token CloseBracket)
+        declareExp = Interpreter.Let <$> (token Lexer.Let *> varName) <*> (token OpenBracket *> number <* token CloseBracket)
         memCalls = mallocExp <|> freeExp
             where
-                mallocExp = Porcelain.Malloc <$> (token Lexer.Malloc *> parensed expr)
-                freeExp = Porcelain.Free <$> 
+                mallocExp = Interpreter.Malloc <$> (token Lexer.Malloc *> parensed expr)
+                freeExp = Interpreter.Free <$> 
                     (token Lexer.Free *> token OpenParentesis *> expr) <*> 
                     (token Comma *> expr <* token CloseParentesis)
 
