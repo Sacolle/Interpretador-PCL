@@ -294,8 +294,8 @@ globalStep (Pcl.Func f, env, pilha) = (Pcl.Func f, env, pilha)
 
 globalFullStep :: (Global, Env, Pilha) -> (Function, Env, Pilha)
 globalFullStep global = case globalStep global of
-    g@(DeclGlobal {}, _, _) -> globalFullStep g
     (Pcl.Func func, env, pilha) -> (func, env, pilha)
+    g -> globalFullStep g
 
 -- Passa por todas as funções e salva ela em Funcss. Para quando chega na Main
 functionStep :: (Function, Funcs) -> (Function, Funcs)
@@ -305,8 +305,8 @@ functionStep (Main expr, funcs) = (Main expr, funcs)
 
 functionFullStep :: (Function, Funcs) -> (Exp, Funcs)
 functionFullStep f = case functionStep f of
-    func@(DeclFunc {}, _) -> functionFullStep func
     (Main expr, funcs) -> (expr, funcs)
+    func -> functionFullStep func
 
 
 

@@ -10,7 +10,6 @@ data Loc = Pilha Number | Memoria Number
 data Value = Number Number | Loc Loc
     deriving (Show, Eq)
 
-
 data Binop = Add | Sub | Mult | Less | Greater | Equal | And | Or 
 
 instance Show Binop where
@@ -23,6 +22,9 @@ instance Show Binop where
         Equal -> " = " 
         And -> " & " 
         Or -> " | " 
+
+data ErrorKinds = UserError | Any
+    deriving (Show)
 
 
 data Exp = Var VarName
@@ -42,6 +44,7 @@ data Exp = Var VarName
     | While Exp Exp
     | CallFunc FuncName [Exp]
     | Fpop Exp -- marcador de escopo de função
+    | Panic ErrorKinds
 
 
 instance Show Exp where
@@ -65,6 +68,7 @@ instance Show Exp where
             Prelude.drop 2 (Prelude.foldl (\acc expr -> acc ++ ", " ++ show expr) "" exprs) 
             ++ ")" 
         Fpop expr -> "Fpop " ++ show expr 
+        Panic kind -> "panic " ++ show kind
 
 
 data Function = DeclFunc FuncName [VarName] Exp Function | Main Exp

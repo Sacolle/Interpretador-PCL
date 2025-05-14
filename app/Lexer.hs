@@ -84,9 +84,8 @@ oneOf = foldl1' (<|>)
 
 
 data Token 
-    = Null -- as
-    | M -- m
-    | P -- p
+    = Null -- NULL
+    | Panic -- Panic
     | Exclamation -- ! 
     | Star -- * -> usado para deref e mult
     | Ampersand -- & -> usado para ref e and
@@ -151,7 +150,8 @@ token = whiteSpace <|> keyword <|> macros <|> operators <|> literals <|> names
         macros =
             oneOf
                 [
-                    Null <$ string "NULL"
+                    Null <$ string "NULL",
+                    Panic <$ string "PANIC"
                 ]
 
         

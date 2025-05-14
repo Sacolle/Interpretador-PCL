@@ -6,7 +6,7 @@ import Control.Applicative (Alternative (..), liftA2)
 import Data.List (foldl')
 import Lexer (Token (..))
 import Data.Bifunctor (first)
-import Pcl (FuncName, VarName, Number, Exp(..), Binop(..), Value (Number, Loc), Loc(Memoria), Function(..), Global(..))
+import Pcl (FuncName, VarName, Number, Exp(..), ErrorKinds(..), Binop(..), Value (Number, Loc), Loc(Memoria), Function(..), Global(..))
 
 newtype Parser a = Parser {runParser :: [Token] -> [(a, [Token])]}
 
@@ -159,7 +159,7 @@ unaryExp = notExp <|> derefExp <|> refExp <|> scopeExp <|> factor
 
 
 factor :: Parser Exp
-factor = declareExp <|> memCalls <|> callExp <|> nullMacro <|> nameExp <|> littExp <|> parensed expr
+factor = declareExp <|> memCalls <|> nullMacro <|> panicMacro <|> callExp <|> nameExp <|> littExp <|> parensed expr
     where 
         declareExp = Pcl.Let <$> (token Lexer.Let *> varName) <*> (token OpenBracket *> number <* token CloseBracket)
         memCalls = mallocExp <|> freeExp
@@ -169,11 +169,13 @@ factor = declareExp <|> memCalls <|> callExp <|> nullMacro <|> nameExp <|> littE
                     (token Lexer.Free *> token OpenParentesis *> expr) <*> 
                     (token Comma *> expr <* token CloseParentesis)
 
+        nullMacro = Value (Loc (Memoria 0)) <$ token Lexer.Null
+        panicMacro = Pcl.Panic UserError <$ token Lexer.Panic
+
         callExp = CallFunc <$> 
             funcName <*> (parensed (sepBy1 expr (token Comma)) <|> emptyParentesis)
             where emptyParentesis = token OpenParentesis *> token CloseParentesis *> Parser (\list -> [([], list)])
 
-        nullMacro = Value (Loc (Memoria 0)) <$ token Lexer.Null
         nameExp = Var <$> varName 
         littExp = Value . Number <$> number
 
