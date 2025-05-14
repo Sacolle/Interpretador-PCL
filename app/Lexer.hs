@@ -7,15 +7,13 @@
 -- eu removi os operadores especiais e adaptei o lexer a PCL
 
 
-module Lexer (Token (..), LexerError (..), lexer, hack) where
+module Lexer (Token (..), LexerError (..), lexer) where
 
 import Control.Applicative (Alternative (..), liftA2)
-import Control.Monad.Except (ExceptT, MonadError (throwError), runExceptT, filterM)
-import Control.Monad.State (State, gets, modify', runState)
-import Data.Char (isAlphaNum, isDigit, isLower, isSpace, isUpper)
-import Data.List (foldl', foldl1')
-import Data.Maybe (listToMaybe, maybeToList)
-import Data.Bifunctor (first, second)
+import Data.Char (isAlphaNum, isDigit, isSpace)
+import Data.List (foldl1')
+import Data.Maybe ()
+import Data.Bifunctor (first)
 
 
 -- Represents the kind of error that can occur
@@ -86,7 +84,7 @@ oneOf = foldl1' (<|>)
 
 
 data Token 
-    = As -- as
+    = Null -- as
     | M -- m
     | P -- p
     | Exclamation -- ! 
@@ -112,7 +110,8 @@ data Token
     | Assign -- :=
     | If -- if
     | Else -- else
-    | While -- While
+    | While -- while
+    | Global -- global
     | IntLit Int -- qualquer número
     | Name String -- qualquer nome
     | WhiteSpace
@@ -121,7 +120,7 @@ data Token
 
 
 token :: Lexer Token
-token = whiteSpace <|> keyword <|> operators <|> literals <|> names
+token = whiteSpace <|> keyword <|> macros <|> operators <|> literals <|> names
     where
         whiteSpace :: Lexer Token
         whiteSpace =  blockComment <|> lineComment <|> space
@@ -132,7 +131,7 @@ token = whiteSpace <|> keyword <|> operators <|> literals <|> names
                 space = WhiteSpace <$ some (satisfies isSpace)
                 meio = Lexer $ \case
                     [] -> Left UnexpectedEOF
-                    [h1] -> Left UnexpectedEOF
+                    [_] -> Left UnexpectedEOF
                     h1:h2:t  -> if not(h1 == '*' && h2 == '/') then Right (h1, h2 : t)
                         else Left (unexpected (h1:h2:t))
 
@@ -140,16 +139,21 @@ token = whiteSpace <|> keyword <|> operators <|> literals <|> names
         keyword = 
             oneOf
                 [
-                    As <$ string "as" ,
-                    M <$ string "m",
-                    P <$ string "p",
                     Malloc <$ string "malloc",
                     Free <$ string "free",
                     Let <$ string "let",
                     If <$ string "if",
                     Else <$ string "else",
-                    While <$ string "while"
+                    While <$ string "while",
+                    Global <$ string "global"
                 ]
+        macros :: Lexer Token
+        macros =
+            oneOf
+                [
+                    Null <$ string "NULL"
+                ]
+
         
         operators :: Lexer Token
         operators =
@@ -215,5 +219,3 @@ lexer input = runLexer
         Right . -- transforma em um option
         filter (\case WhiteSpace -> False; Comment _ -> False; _ -> True) . -- filtra os espaços em branco
         fst -- pega a lista de tokens 
-
-hack input = print (lexer input)

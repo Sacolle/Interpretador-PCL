@@ -1,13 +1,12 @@
 {-# LANGUAGE LambdaCase #-}
 
-module Parser where
+module Parser(parser, ParseError) where
 
 import Control.Applicative (Alternative (..), liftA2)
 import Data.List (foldl')
 import Lexer (Token (..))
-import Data.Bifunctor (first, second)
-import Interpreter (FuncName, VarName, Number, Exp(..), Binop(..), Value (Number), Locals (..), Function(..))
-import Data.Maybe (listToMaybe)
+import Data.Bifunctor (first)
+import Pcl (FuncName, VarName, Number, Exp(..), Binop(..), Value (Number, Loc), Loc(Memoria), Function(..), Global(..))
 
 newtype Parser a = Parser {runParser :: [Token] -> [(a, [Token])]}
 
@@ -88,6 +87,15 @@ parensed :: Parser a -> Parser a
 parensed p = token OpenParentesis *> p <* token CloseParentesis
 
 
+globals :: Parser Global
+globals = globalDeclaration <|> firstFunction
+    where
+        firstFunction = Func <$> functions
+        globalDeclaration = DeclGlobal <$> 
+            (token Lexer.Global *> varName) <*> 
+            (token OpenBracket *> number <* token CloseBracket) <*>
+            globals
+
 functions :: Parser Function
 functions = funcDeclaration <|> funcMain
     where
@@ -108,65 +116,56 @@ expr = binExp
 binExp :: Parser Exp
 binExp = composeExp
     where 
-        composeExp = opsR (Interpreter.Comp <$ token Lexer.Semicolon) whileExp
+        composeExp = opsR (Pcl.Comp <$ token Lexer.Semicolon) whileExp
         --here
 
         -- if causa problema de ambiguidade
         -- if (1) 1 else 0;3 deve ser ter o parse (if (1) (1) else 0);3
         -- mas atualmente ele também realiza if (1) (1) else (0;3)
-        whileExp = (Interpreter.While <$> (token Lexer.While *> parensed whileExp) <*> whileExp) <|> ifExp
+        whileExp = (Pcl.While <$> (token Lexer.While *> parensed whileExp) <*> whileExp) <|> ifExp
 
-        ifExp = (Interpreter.If <$> 
+        ifExp = (Pcl.If <$> 
             (token Lexer.If *> parensed ifExp) <*>
             ifExp <*> 
             (token Lexer.Else *> ifExp)
             ) <|> assignExp
 
-        assignExp = opsL (Interpreter.Assign <$ token Lexer.Assign) boolExp
+        assignExp = opsL (Pcl.Assign <$ token Lexer.Assign) boolExp
         boolExp = opsL booleanOperators compExp
             where 
                 booleanOperators = 
                     (Binop And <$ token Ampersand) <|> 
-                    (Binop Interpreter.Or <$ token Lexer.Or)
+                    (Binop Pcl.Or <$ token Lexer.Or)
         compExp = opsL comparatorOperators addSubExp
             where 
                 comparatorOperators = 
-                    (Binop Interpreter.Less <$ token Lexer.Less ) <|>
-                    (Binop Interpreter.Greater <$ token Lexer.Greater ) <|>
-                    (Binop Interpreter.Equal <$ token Lexer.Equal ) 
+                    (Binop Pcl.Less <$ token Lexer.Less ) <|>
+                    (Binop Pcl.Greater <$ token Lexer.Greater ) <|>
+                    (Binop Pcl.Equal <$ token Lexer.Equal ) 
         addSubExp = opsL (
-            (Binop Interpreter.Add <$ token Lexer.Add) <|> 
-            (Binop Interpreter.Sub <$ token Lexer.Sub)
+            (Binop Pcl.Add <$ token Lexer.Add) <|> 
+            (Binop Pcl.Sub <$ token Lexer.Sub)
             ) multExp
         multExp = opsL (Binop Mult <$ token Star) unaryExp
 
 
 unaryExp :: Parser Exp
-unaryExp = notExp <|> asExp <|> derefExp <|> refExp <|> scopeExp <|> factor
+unaryExp = notExp <|> derefExp <|> refExp <|> scopeExp <|> factor
     where
         notExp = Not <$> (token Exclamation *> factor)
-
-        asExp = Interpreter.As <$> (factor <* token Lexer.As) <*> local
-            where local = Parser $ \case
-                    t : ts -> case t of
-                        Lexer.M -> [(Memoria, ts)]
-                        Lexer.P -> [(Pilha, ts)]
-                        _ -> []
-                    _ -> []
-    
         derefExp = Deref <$> (token Star *> factor)
         refExp = Ref <$> (token Ampersand *> varName) -- ref só contem nome de var
         scopeExp = Scope <$> (token OpenBrace *> expr <* token CloseBrace)
 
 
 factor :: Parser Exp
-factor = declareExp <|> memCalls <|> callExp <|> nameExp <|> littExp <|> parensed expr
+factor = declareExp <|> memCalls <|> callExp <|> nullMacro <|> nameExp <|> littExp <|> parensed expr
     where 
-        declareExp = Interpreter.Let <$> (token Lexer.Let *> varName) <*> (token OpenBracket *> number <* token CloseBracket)
+        declareExp = Pcl.Let <$> (token Lexer.Let *> varName) <*> (token OpenBracket *> number <* token CloseBracket)
         memCalls = mallocExp <|> freeExp
             where
-                mallocExp = Interpreter.Malloc <$> (token Lexer.Malloc *> parensed expr)
-                freeExp = Interpreter.Free <$> 
+                mallocExp = Pcl.Malloc <$> (token Lexer.Malloc *> parensed expr)
+                freeExp = Pcl.Free <$> 
                     (token Lexer.Free *> token OpenParentesis *> expr) <*> 
                     (token Comma *> expr <* token CloseParentesis)
 
@@ -174,6 +173,7 @@ factor = declareExp <|> memCalls <|> callExp <|> nameExp <|> littExp <|> parense
             funcName <*> (parensed (sepBy1 expr (token Comma)) <|> emptyParentesis)
             where emptyParentesis = token OpenParentesis *> token CloseParentesis *> Parser (\list -> [([], list)])
 
+        nullMacro = Value (Loc (Memoria 0)) <$ token Lexer.Null
         nameExp = Var <$> varName 
         littExp = Value . Number <$> number
 
@@ -183,10 +183,10 @@ factor = declareExp <|> memCalls <|> callExp <|> nameExp <|> littExp <|> parense
 -- então deve-se filtrar todos os parsers que não terminem. 
 -- tenho que ver o que fazer para isso não acontecer
 
-data ParseError = FailedParse | AmbiguousParse [(Function, [Token])] deriving(Show)
+data ParseError = FailedParse | AmbiguousParse [(Global, [Token])] deriving(Show)
 
-parser :: [Token] -> Either ParseError Function
-parser input = case runParser functions input of
+parser :: [Token] -> Either ParseError Global
+parser input = case runParser globals input of
     [] -> Left FailedParse
     parses -> let fullparses = filter (\(_, list) -> null list) parses in
         case fullparses of

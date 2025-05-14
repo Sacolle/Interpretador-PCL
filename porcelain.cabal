@@ -66,6 +66,11 @@ executable porcelain
         Lexer
         Parser
         Interpreter
+        Env
+        Pcl
+        Funcs
+        Pilha
+        Mem
 
 
     -- LANGUAGE extensions used by modules in this package.

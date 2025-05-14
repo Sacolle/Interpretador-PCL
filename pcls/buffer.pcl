@@ -1,4 +1,3 @@
-
 let strlen(string) {
 	let i[1];
 	i := 0;
@@ -12,7 +11,7 @@ let sanitize_input(user_supplied_string){
 	let dst_buf[1];
 	dst_buf := malloc(4 * 5); //MAX_SIZE hardcoded como 5 pois não tem métodos de inicialização de lista
 	if(6 < string_size){
-		*(0 as m) //uso de deref do ponteiro nulo como uma forma tosca de die
+		*NULL //uso de deref do ponteiro nulo como uma forma tosca de die
 	} else 0;
 	let dst_index[1];
 	dst_index := 0;

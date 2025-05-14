@@ -1,29 +1,12 @@
-let newNode(val) {
-	let node[1];
-	node := malloc(3);
-	*node := val;
-	*(node + 1) := 0 as m;
-	*(node + 2) := 0 as m;
-	node
+global stuff[1]
+
+let in() {
+	stuff
 }
-
-let insert(tree, val){
-	if (tree = 0) 
-		newNode(val)
-	else
-		if (val > *tree) *(tree + 1) := insert(*(tree + 1), val)
-		else *(tree + 2) := insert(*(tree + 2), val);
-		tree
-	
-}
-
-
 
 
 let () 
-	let tree[1];
-	tree := 0 as m;
-	tree := insert(tree, 5);
-	tree := insert(tree, 1);
-
+	let stuff[1];
+	stuff := 1;
+	in();
 	0

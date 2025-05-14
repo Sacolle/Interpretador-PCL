@@ -1,6 +1,5 @@
-import Lexer(Token, lexer, hack)
+import Lexer(lexer)
 import System.Environment (getArgs)
-import Data.Maybe (listToMaybe)
 import Parser (parser)
 import Interpreter (stepRun, fullRun)
 
