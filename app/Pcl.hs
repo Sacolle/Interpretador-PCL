@@ -23,7 +23,15 @@ instance Show Binop where
         And -> " & " 
         Or -> " | " 
 
-data ErrorKinds = UserError | Any
+data ErrorKinds = UserError 
+    | Any 
+    | UninitializedMemoryAcess 
+    | UninitializedMemoryWrite
+    | InitializedButEmptyMemoryAcess 
+    | ControlValueStackAcess
+    | UninitializedStackAcess
+    | UninitializedStackWrite
+    | InitializedButEmptyStackAcess 
     deriving (Show)
 
 

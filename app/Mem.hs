@@ -16,36 +16,39 @@ getMv 0 (h : _) = Just h
 getMv loc (_ : t) = getMv (loc - 1) t
 
 --- Obtém o valor sintático da memória
-get :: Loc -> Mem -> Value
+get :: Loc -> Mem -> Either ErrorKinds Value 
 
 get (Memoria loc) mem = maybe 
-    (error "Local inexistente na memória")
+    (Left UninitializedMemoryAcess)
     (\case 
-        Mem.Loc loc' -> Pcl.Loc loc'
-        Num number -> Pcl.Number number 
-        val -> error ("Conversão de memória inválida.\nTentativa de converter: " ++ show val)
+        Mem.Loc loc' -> Right $ Pcl.Loc loc'
+        Mem.Num number -> Right $ Pcl.Number number 
+        Mem.Null -> Left UninitializedMemoryAcess
+        Mem.Bot -> Left InitializedButEmptyMemoryAcess
     )
     (getMv loc mem)
 
 get (Pilha _) _= error "chamada da função memGet com um endereço de pilha"
 
 --- Coloca o MemValue no Loc da Memória
-insertMv :: Int -> Values -> Mem -> Mem
+insertMv :: Int -> Values -> Mem -> Either ErrorKinds Mem
 
-insertMv 0 value (_ : t) = value : t
-insertMv loc value (h : t) = h : insertMv (loc - 1) value t
-insertMv _ _ [] = error "Index Out of bounds na memória"
+insertMv 0 value (_ : t) = Right $ value : t
+insertMv loc value (h : t) = do 
+    rest <- insertMv (loc - 1) value t
+    Right $ h : rest
+insertMv _ _ [] = Left UninitializedMemoryWrite
 
 --- Coloca um Value na memória
 --- quase que exatamente igual a pilhaSet
-insert :: Loc -> Value -> Mem -> Mem
+insert :: Loc -> Value -> Mem -> Either ErrorKinds Mem
 insert (Memoria loc) value mem
     | isValidInsertion = 
         insertMv loc (case value of 
             Pcl.Number number -> Num number
             Pcl.Loc loc' -> Mem.Loc loc'
         ) mem
-    | otherwise = error "Inserção em local de memória inválido"
+    | otherwise = Left UninitializedMemoryWrite
     where
         isValidInsertion = maybe False (\case 
             Null -> False

@@ -2,13 +2,12 @@
 
 module Pilha(Values(..), Pilha, get, set, pop) where
 
-import Pcl(Number, Loc(Pilha, Memoria), Value(Number, Loc))
+import Pcl(Number, Loc(Pilha, Memoria), Value(Number, Loc), ErrorKinds(..))
 
 --- Pilha de Valores
 
 data Values = Loc Pcl.Loc | Num Pcl.Number | Bot | Null | Stack | Func deriving (Show, Eq)
 type Pilha = [Values]
-
 
 --- Obtém o valor da pilha da pilha de valores
 --- indexa com (length pilha) o topo e 0 a base.
@@ -22,31 +21,36 @@ getMv loc pilha = getMv' (length pilha - 1) pilha
 
 
 --- Obtém o valor sintático da pilha de valores
-get :: Pcl.Loc -> Pilha -> Value
+get :: Pcl.Loc -> Pilha -> Either ErrorKinds Value
 
 get (Pilha loc) pilha = maybe 
-    (error "Local inexistente na memória")
+    (Left UninitializedStackAcess)
     (\case --se pilhaGetMv retorna Just, aplica essa função
-        Pilha.Loc ploc -> Pcl.Loc ploc
-        Num number -> Pcl.Number number 
-        val -> error ("Conversão de memória inválida.\nTentativa de converter: " ++ show val)
+        Pilha.Loc ploc -> Right $ Pcl.Loc ploc
+        Pilha.Num number -> Right $ Pcl.Number number 
+        Pilha.Bot -> Left InitializedButEmptyStackAcess
+        Pilha.Null -> Left UninitializedStackAcess
+        Pilha.Stack -> Left ControlValueStackAcess
+        Pilha.Func -> Left ControlValueStackAcess
     )
     (getMv loc pilha)
 
 get (Memoria _) _ = error "chamada da função pilhaGet com um endereço de memória"
 
 --- Coloca o PiValue no Loc da Pilha
-setMv :: Int -> Values -> Pilha -> Pilha
+setMv :: Int -> Values -> Pilha -> Either ErrorKinds Pilha
 
 setMv loc value pilha = setMv' (length pilha - 1) pilha
     where
-    setMv' _ [] = error "Index Out of bounds na pilha"
+    setMv' _ [] = Left UninitializedStackWrite
     setMv' size  (h : t)
-        | loc == size = value : t
-        | otherwise = h : setMv' (size - 1) t
+        | loc == size = Right $ value : t
+        | otherwise = do 
+            rest <- setMv' (size - 1) t
+            Right $ h : rest
 
 --- Coloca o Value no Loc da Pilha
-set :: Loc -> Value -> Pilha -> Pilha
+set :: Loc -> Value -> Pilha -> Either ErrorKinds Pilha
 --- Parece o demônio da babilônia, mas faz a sequência:
 --- Checa se o local de inserção é valido (se é bot, num ou local)
 --- se é, coloca o valor como valor de pilha
@@ -56,7 +60,7 @@ set (Pilha loc) value pilha
             Pcl.Number number -> Num number
             Pcl.Loc loc' -> Pilha.Loc loc'
         ) pilha
-    | otherwise = error "Inserção em local de memória inválido"
+    | otherwise = Left UninitializedStackWrite
     where 
         isValidInsertion = maybe False (\case 
             Num _ -> True

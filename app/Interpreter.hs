@@ -1,3 +1,4 @@
+{-# LANGUAGE LambdaCase #-}
 
 module Interpreter where
 
@@ -98,21 +99,24 @@ exprStep (Let nome size, funcs, env, pilha, mem) =
 --- Atribui-deref-pilha
 --- *lp := value
 exprStep (Assign (Deref (Value (Loc (Pilha local)))) (Value value), funcs, env, pilha, mem) = 
-    let pilha' = Pilha.set (Pilha local) value pilha in 
-    (Value value, funcs, env, pilha', mem)
+    case Pilha.set (Pilha local) value pilha of 
+        Left err -> (Panic err, funcs, env, pilha, mem) -- se houve um erro na inserção, gera um pânico do erro
+        Right pilha' -> (Value value, funcs, env, pilha', mem) -- se não atualiza a pilha
 
 --- Atribui-deref-mem
 --- *lm := value
 exprStep (Assign (Deref (Value (Loc (Memoria local)))) (Value value), funcs, env, pilha, mem) = 
-    let mem' = Mem.insert (Memoria local) value mem in 
-    (Value value, funcs, env, pilha, mem')
+    case Mem.insert (Memoria local) value mem of
+        Left err -> (Panic err, funcs, env, pilha, mem)
+        Right mem' -> (Value value, funcs, env, pilha, mem')
 
 --- Atribui-var
 --- x := value
 exprStep (Assign (Var varName) (Value value), funcs, env, pilha, mem) = 
     let local = Env.get varName env in
-    let pilha' = Pilha.set local value pilha in 
-    (Value value, funcs, env, pilha', mem)
+    case Pilha.set local value pilha of
+        Left err -> (Panic err, funcs, env, pilha, mem)
+        Right pilha' -> (Value value, funcs, env, pilha', mem)
 
 --- Atribui-deref-right-step
 exprStep (Assign (Deref (Value (Loc loc))) expr, funcs, env, pilha, mem) = 
@@ -192,13 +196,15 @@ exprStep (Binop op expr1 expr2, funcs, env, pilha, mem) =
 
 --- Deref-memoria
 exprStep (Deref (Value (Loc (Memoria loc))), funcs, env, pilha, mem) = 
-    let value = Mem.get (Memoria loc) mem in 
-        (Value value, funcs, env, pilha, mem)
+    case Mem.get (Memoria loc) mem of
+        Left err -> (Panic err, funcs, env, pilha, mem)
+        Right value -> (Value value, funcs, env, pilha, mem)
 
 --- Deref-pilha
 exprStep (Deref (Value (Loc (Pilha loc))), funcs, env, pilha, mem) = 
-    let value = Pilha.get (Pilha loc) pilha in 
-        (Value value, funcs, env, pilha, mem)
+    case Pilha.get (Pilha loc) pilha of 
+        Left err -> (Panic err, funcs, env, pilha, mem)
+        Right value -> (Value value, funcs, env, pilha, mem)
 
 --- Deref-step
 exprStep (Deref expr, funcs, env, pilha, mem) = 
@@ -213,8 +219,9 @@ exprStep (Ref varName, funcs, env, pilha, mem) =
 --- Var
 exprStep (Var varName, funcs, env, pilha, mem) = 
     let loc = Env.get varName env in 
-    let value = Pilha.get loc pilha in
-        (Value value, funcs, env, pilha, mem)
+    case Pilha.get loc pilha of
+        Left err -> (Panic err, funcs, env, pilha, mem)
+        Right value -> (Value value, funcs, env, pilha, mem)
 
 
 --- ==================================
@@ -243,27 +250,39 @@ exprStep (If expr1 expr2 expr3, funcs, env, pilha, mem) =
 --- Chamada de função
 --- ==================================
 
-exprStep (CallFunc funcName args, funcs, env, pilha, mem) = 
-    let (declargs, body) = Funcs.get funcName funcs in 
-        if length declargs /= length args then
-            error "Chamada de função com o número errado de argumentos"
-        else 
-            -- gera uma árvore sintática apartir do zip das listas
-            let exprTree = Prelude.foldl 
-                    -- cada elemento vira um let varName[varSize]; varName := varExp
-                    (\acc (varName, value) -> 
-                        Comp (Comp (Let varName 1) (Assign (Var varName) value)) acc) 
-                    body 
-                    -- usa-se o reverse pois essa árvore cresce da folha a raiz, ou seja, o primeiro
-                    -- elemento da lista vai ser o último na árvore
-                    (reverse $ zip 
-                        declargs 
-                        (Prelude.map -- avalia as exprressões para valor (em ordem?)
-                            (\expr -> let (e, _, _, _, _) = exprStep (expr, funcs, env, pilha, mem) in e) 
-                            args
-                            ))
-                        in
-            (Fpop $ Scope exprTree, funcs, Env.push Env.Stop env, Pilha.Func : pilha, mem)
+exprStep (CallFunc funcName args, funcs, env, pilha, mem)
+    | length declargs /= length args = 
+        error "Chamada de função com o número errado de argumentos"
+    | evaluatedAllList = let exprTree = Prelude.foldl foldTree body (reverse $ zip declargs args) in
+        (Fpop $ Scope exprTree, funcs, Env.push Env.Stop env, Pilha.Func : pilha, mem)
+    | otherwise = let (evaluatedArgs, funcs', env', pilha', mem') = evaluateNext (args, funcs, env, pilha, mem) in
+        (CallFunc funcName evaluatedArgs, funcs', env', pilha', mem')
+    where 
+        (declargs, body) = Funcs.get funcName funcs
+        evaluatedAllList = Prelude.all (\case Value _ -> True; _ -> False) args
+        foldTree acc (varName, value) = Comp (Comp (Let varName 1) (Assign (Var varName) value)) acc
+
+        evaluateNext ([], _, _, _, _) = error "Padrão inacessível em avaliação de argumentos"
+        evaluateNext (Value v : t, _, _ , _, _) = 
+            let (args', funcs', env', pilha', mem') = evaluateNext (t, funcs, env, pilha, mem) in
+            (Value v : args', funcs', env', pilha', mem')
+        evaluateNext (h : t, _, _ , _, _) = 
+            let (expr, funcs', env', pilha', mem') = exprStep (h, funcs, env, pilha, mem) in
+            (expr : t, funcs', env', pilha', mem')
+ {- 
+    let exprTree =         -- avalia até chegar em um valor
+        evaluatedArgs = 
+            let (exprList, _, _, _, _) = Prelude.foldl foldfunc ([], funcs, env, pilha, mem) args in 
+                    exprList
+            where
+                foldfunc (acc, afuncs, aenv, apilha, amem) expr = 
+                    let (expr', funcs', env', pilha', mem') = evaluateArg (expr, afuncs, aenv, apilha, amem) in
+                    (expr' : acc, funcs', env', pilha', mem')
+                evaluateArg expr = case exprStep expr of
+                    res@(Value _, _, _, _, _) -> res
+                    expr' -> evaluateArg expr'
+-}
+
 
 --- Remove as estruturas de controle das pilhas no fim da função
 exprStep (Fpop (Value v), funcs, env, pilha, mem) = 
@@ -344,6 +363,7 @@ stepRun globals = do
         print env'
         print pilha'
         print mem'
+        print funcs
         case expr' of 
             Value _ -> return (expr', funcs, env', pilha', mem')
             _ -> do 

@@ -1,12 +1,14 @@
 global stuff[1]
+global other[1]
 
-let in() {
-	stuff
+let in(a, b, c) {
+	other := c;
+	stuff := a
 }
 
 
 let () 
 	let stuff[1];
 	stuff := 1;
-	in();
+	in(stuff := stuff + 1, stuff := stuff + 1, stuff := stuff + 1);
 	0
