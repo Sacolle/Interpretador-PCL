@@ -269,20 +269,6 @@ exprStep (CallFunc funcName args, funcs, env, pilha, mem)
         evaluateNext (h : t, _, _ , _, _) = 
             let (expr, funcs', env', pilha', mem') = exprStep (h, funcs, env, pilha, mem) in
             (expr : t, funcs', env', pilha', mem')
- {- 
-    let exprTree =         -- avalia até chegar em um valor
-        evaluatedArgs = 
-            let (exprList, _, _, _, _) = Prelude.foldl foldfunc ([], funcs, env, pilha, mem) args in 
-                    exprList
-            where
-                foldfunc (acc, afuncs, aenv, apilha, amem) expr = 
-                    let (expr', funcs', env', pilha', mem') = evaluateArg (expr, afuncs, aenv, apilha, amem) in
-                    (expr' : acc, funcs', env', pilha', mem')
-                evaluateArg expr = case exprStep expr of
-                    res@(Value _, _, _, _, _) -> res
-                    expr' -> evaluateArg expr'
--}
-
 
 --- Remove as estruturas de controle das pilhas no fim da função
 exprStep (Fpop (Value v), funcs, env, pilha, mem) = 
