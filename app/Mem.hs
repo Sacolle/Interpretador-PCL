@@ -53,20 +53,13 @@ insert loc value mem
     | not (isInBounds loc) = Left OutOfBoundsWrite
     | otherwise = maybe (Left UninitializedMemoryWrite) parseValue (getMv (idx loc + offset loc) mem)
     where 
-        parseValue (mValue, lock) 
-            | key loc /= lock = Left UseAfterFree
-            | matchOrBot mValue value = 
+        parseValue (_, lock) 
+            | key loc /= lock = Left UseAfterFree -- se lock é valido, então a memória não pode ser -
+            | otherwise = 
                 insertMv (idx loc + offset loc) (case value of 
                     Pcl.Number number -> Num number
                     Pcl.Loc loc' -> Mem.Loc loc'
                 ) mem
-            | otherwise = Left TypeConfusionError
-            where
-                matchOrBot v1 v2 = case v1 of
-                    Bot -> True
-                    Num _ -> case v2 of Number _ -> True; _ -> False
-                    Mem.Loc _ -> case v2 of Pcl.Loc _ -> True; _ -> False
-                    _ -> False
 
 
 malloc :: Int -> Mem -> (Pcl.Loc, Mem)

@@ -65,23 +65,13 @@ set loc value pilha
     | not $ isInBounds loc = Left OutOfBoundsWrite
     | otherwise = maybe (Left UninitializedStackWrite) parseValue (getMv (idx loc + offset loc) pilha)
     where 
-        parseValue :: (Values, Int) -> Either ErrorKinds Pilha
-        parseValue (pValue, lock)
-            | key loc /= lock = Left ReturnOfStackVariableAdress --check for temporal error
-            | matchOrBot pValue value = --check for type error
-                setMv (idx loc + offset loc) (case value of 
+        parseValue ( _, lock)
+            | key loc /= lock = Left ReturnOfStackVariableAdress 
+            -- se lock é valido, então não tem como o valor naquela posição de memória ser Null
+            | otherwise = setMv (idx loc + offset loc) (case value of 
                     Pcl.Number number -> Num number
                     Pcl.Loc loc' -> Pilha.Loc loc'
                 ) pilha
-            | otherwise = Left TypeConfusionError
-            where
-                -- se o valor da pilha for do mesmo tipo do inserido, ou o valor da pilha é bot, insere o valor
-                matchOrBot :: Values -> Value -> Bool
-                matchOrBot v1 v2 = case v1 of
-                    Bot -> True
-                    Num _ -> case v2 of Number _ -> True; _ -> False
-                    Pilha.Loc _ -> case v2 of Pcl.Loc _ -> True; _ -> False
-                    _ -> False
 
 -- Usado para adicionar valores de controle na pilha
 pushCtrl :: Values -> Pilha -> Pilha

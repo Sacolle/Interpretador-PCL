@@ -63,7 +63,6 @@ data ErrorKinds = UserError
     | FreeOfMemoryNotOnHeap
     | UninitializedFree
     | ReturnOfStackVariableAdress
-    | TypeConfusionError
     deriving (Show)
 
 
