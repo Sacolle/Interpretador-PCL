@@ -2,13 +2,13 @@ let newNode(val) {
 	let node[1];
 	node := malloc(3);
 	*node := val;
-	*(node + 1) := 0 as m;
-	*(node + 2) := 0 as m;
+	*(node + 1) := NULL;
+	*(node + 2) := NULL;
 	node
 }
 
 let insert(tree, val){
-	if (tree = 0) 
+	if (tree = NULL) 
 		newNode(val)
 	else {
 		if (val > *tree) *(tree + 1) := insert(*(tree + 1), val)
@@ -18,8 +18,8 @@ let insert(tree, val){
 }
 
 let get(tree, val){
-	if (tree = 0) 
-		0 as m
+	if (tree = NULL) 
+		PANIC
 	else
 		if (val = *tree)
 			tree
@@ -30,7 +30,7 @@ let get(tree, val){
 
 let () 
 	let tree[1];
-	tree := 0 as m;
+	tree := NULL;
 	tree := insert(tree, 5);
 	tree := insert(tree, 1);
 	tree := insert(tree, 7);

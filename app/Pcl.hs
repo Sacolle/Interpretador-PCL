@@ -4,8 +4,30 @@ type Number = Int
 type VarName = String
 type FuncName = String
 
-data Loc = Pilha Number | Memoria Number
+data Local = Pilha | Memoria
     deriving (Show, Eq)
+
+data Loc = LocT { 
+    local :: Local, 
+    idx :: Int, 
+    key :: Int, 
+    offset :: Int, 
+    size :: Int 
+} deriving (Eq)
+
+instance Show Loc where
+    show LocT {local, idx, key, offset, size} = 
+        "(" ++ show local ++ "|i" ++ show idx ++ "|o" ++ show offset ++ "|k" ++ show key ++ "|s" ++ show size ++ ")"
+
+newLoc :: Local -> Int -> Int -> Int -> Loc
+newLoc local idx key amount = LocT {local, idx, key, offset=0, size=amount}
+
+nullLoc :: Loc
+nullLoc = LocT {local=Memoria, idx=0, key=0, offset=0, size=0}
+
+isInBounds :: Loc -> Bool
+isInBounds LocT{local=_, idx=_, key=_, offset, size} = offset >= 0 && offset < size
+
 
 data Value = Number Number | Loc Loc
     deriving (Show, Eq)
@@ -32,6 +54,16 @@ data ErrorKinds = UserError
     | UninitializedStackAcess
     | UninitializedStackWrite
     | InitializedButEmptyStackAcess 
+    | OutOfBoundsRead
+    | OutOfBoundsWrite
+    | OutOfBoundsFree
+    | DoubleFree
+    | PartialFree
+    | UseAfterFree
+    | FreeOfMemoryNotOnHeap
+    | UninitializedFree
+    | ReturnOfStackVariableAdress
+    | TypeConfusionError
     deriving (Show)
 
 

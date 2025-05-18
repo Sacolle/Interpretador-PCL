@@ -6,7 +6,9 @@ import Control.Applicative (Alternative (..), liftA2)
 import Data.List (foldl')
 import Lexer (Token (..))
 import Data.Bifunctor (first)
-import Pcl (FuncName, VarName, Number, Exp(..), ErrorKinds(..), Binop(..), Value (Number, Loc), Loc(Memoria), Function(..), Global(..))
+import Pcl (FuncName, VarName, Number, Exp(..), 
+    ErrorKinds(..), Binop(..), Value (Number, Loc),
+    nullLoc, Function(..), Global(..))
 
 newtype Parser a = Parser {runParser :: [Token] -> [(a, [Token])]}
 
@@ -169,7 +171,7 @@ factor = declareExp <|> memCalls <|> nullMacro <|> panicMacro <|> callExp <|> na
                     (token Lexer.Free *> token OpenParentesis *> expr) <*> 
                     (token Comma *> expr <* token CloseParentesis)
 
-        nullMacro = Value (Loc (Memoria 0)) <$ token Lexer.Null
+        nullMacro = Value (Loc nullLoc) <$ token Lexer.Null
         panicMacro = Pcl.Panic UserError <$ token Lexer.Panic
 
         callExp = CallFunc <$> 
