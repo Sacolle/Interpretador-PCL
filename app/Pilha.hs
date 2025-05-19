@@ -28,7 +28,10 @@ get :: Pcl.Loc -> Pilha -> Either ErrorKinds Value
 get loc pilha 
     | local loc == Memoria = error "chamada da função pilhaGet com um endereço de memória"
     | not $ isInBounds loc = Left OutOfBoundsRead 
-    | otherwise = maybe (Left UninitializedStackAcess) parseValue (getMv (idx loc + offset loc) pilha)
+    -- se chegou aqui, está nos limites do ponteiro (0 <= offset < size), ou seja, se não houver memória na pilha
+    -- então é um caso de um useAfterFree no stack, pois para o ponteiro ter sido gerado, essa região deveria, em algum ponto, ter sido alocada
+    -- Em um computador, como o topo da pilha não é literalmente removido, os valores não podem ser não inicializados
+    | otherwise = maybe (Left ReturnOfStackVariableAdress) parseValue (getMv (idx loc + offset loc) pilha)
     where
         parseValue :: (Values, Int) -> Either ErrorKinds Pcl.Value
         parseValue (value, lock) 
@@ -37,23 +40,30 @@ get loc pilha
                 Pilha.Loc ploc -> Right $ Pcl.Loc ploc
                 Pilha.Num number -> Right $ Pcl.Number number 
                 Pilha.Bot -> Left InitializedButEmptyStackAcess
-                Pilha.Null -> Left UninitializedStackAcess
-                Pilha.Stack -> Left ControlValueStackAcess
-                Pilha.Func -> Left ControlValueStackAcess
+                -- Esses 3 casos nunca acontecem, pois se chegou neste otherwise
+                -- a) o ponteiro está dentro do espaço alocado (não erro espacial)
+                -- b) a região de memória está viva (não temporal)
+                -- Como não se coloca valor de controle em espaço alocado
+                -- e como na alocação atribui-se \bot, dado os elementos acima
+                -- não tem como uma de-referencia de um ponteiro in-bounds vivo resultar nos demais valores 
+                rest -> error ("Pilha.get: o valor na região de memória não poderia ser " ++ show rest)
+                -- Pilha.Null -> Left UninitializedStackAcess 
+                -- Pilha.Stack -> Left ControlValueStackAcess
+                -- Pilha.Func -> Left ControlValueStackAcess
 
 --- Coloca o Value no Loc da Pilha
-setMv :: Int -> Values -> Pilha -> Either ErrorKinds Pilha
+setMv :: Int -> Values -> Pilha -> Maybe Pilha
 
 setMv loc value (pilha, mono) = do 
     newPilha <- setMv' (length pilha - 1) pilha
-    Right (newPilha, mono)
+    Just (newPilha, mono)
     where
-        setMv' _ [] = Left UninitializedStackWrite
+        setMv' _ [] = Nothing
         setMv' size  (h : t)
-            | loc == size = Right $ (value, snd h) : t
+            | loc == size = Just $ (value, snd h) : t
             | otherwise = do 
                 rest <- setMv' (size - 1) t
-                Right $ h : rest
+                Just $ h : rest
 
 --- Coloca o Value no Loc da Pilha
 set :: Loc -> Value -> Pilha -> Either ErrorKinds Pilha
@@ -63,15 +73,20 @@ set :: Loc -> Value -> Pilha -> Either ErrorKinds Pilha
 set loc value pilha 
     | local loc == Memoria = error "chamada da função pilhaSet com um endereço de memória"
     | not $ isInBounds loc = Left OutOfBoundsWrite
-    | otherwise = maybe (Left UninitializedStackWrite) parseValue (getMv (idx loc + offset loc) pilha)
+    | otherwise = maybe (Left ReturnOfStackVariableAdress) parseValue (getMv (idx loc + offset loc) pilha)
     where 
-        parseValue ( _, lock)
+        parseValue (_, lock)
             | key loc /= lock = Left ReturnOfStackVariableAdress 
-            -- se lock é valido, então não tem como o valor naquela posição de memória ser Null
-            | otherwise = setMv (idx loc + offset loc) (case value of 
-                    Pcl.Number number -> Num number
-                    Pcl.Loc loc' -> Pilha.Loc loc'
-                ) pilha
+            -- Aqui fica o mesmo comentário que o da função get, 
+            -- se o ponteiro é in-bounds e vivo, então a inserção só opera sobre \bots, nums e locais
+            | otherwise = 
+                maybe 
+                    (error "Mem.set: A pilha deveria existir no momento da inserção de valor") 
+                    Right 
+                    (setMv (idx loc + offset loc) (case value of 
+                        Pcl.Number number -> Num number
+                        Pcl.Loc loc' -> Pilha.Loc loc'
+                    ) pilha)
 
 -- Usado para adicionar valores de controle na pilha
 pushCtrl :: Values -> Pilha -> Pilha

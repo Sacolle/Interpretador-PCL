@@ -26,24 +26,29 @@ get :: Loc -> Mem -> Either ErrorKinds Value
 get loc mem 
     | local loc == Pilha = error "chamada da função Mem.get com um endereço de pilha"
     | not $ isInBounds loc = Left OutOfBoundsRead
-    | otherwise = maybe (Left UninitializedMemoryAcess) parseValue (getMv (idx loc + offset loc) mem) 
+    -- se chegou aqui, está nos limites do ponteiro (0 <= offset < size), ou seja, 
+    -- não há como não haver memória, visto que um ponteiro nos limites gera uma memória nesses limites
+    | otherwise = maybe 
+        (error "Mem.get: a memória desta região deveria estar alocada") 
+        parseValue (getMv (idx loc + offset loc) mem) 
     where 
         parseValue (value, lock)
             | key loc /= lock = Left UseAfterFree
             | otherwise = case value of
                 Mem.Loc loc' -> Right $ Pcl.Loc loc'
                 Mem.Num number -> Right $ Pcl.Number number 
-                Mem.Null -> Left UninitializedMemoryAcess
                 Mem.Bot -> Left InitializedButEmptyMemoryAcess
+                -- com um ponteiro vivo e in-bounds, não há como o valor da célula ser Null
+                Mem.Null -> error "Mem.get: Valor da célula de memória nesta posição não tem como ter valor -"
 
 --- Coloca o MemValue no Loc da Memória
-insertMv :: Int -> Values -> Mem -> Either ErrorKinds Mem
+insertMv :: Int -> Values -> Mem -> Maybe Mem
 
-insertMv 0 value (h : t, mono) = Right ((value, snd h) : t, mono)
+insertMv 0 value (h : t, mono) = Just ((value, snd h) : t, mono)
 insertMv loc value (h : t, mono) = do 
     (rest, mono') <- insertMv (loc - 1) value (t, mono)
-    Right (h : rest, mono')
-insertMv _ _ ([],_) = Left UninitializedMemoryWrite
+    Just (h : rest, mono')
+insertMv _ _ ([],_) = Nothing
 
 --- Coloca um Value na memória
 --- quase que exatamente igual a pilhaSet
@@ -51,22 +56,26 @@ insert :: Loc -> Value -> Mem -> Either ErrorKinds Mem
 insert loc value mem
     | local loc == Pilha = error "chamada da função Mem.insert com um endereço de pilha"
     | not (isInBounds loc) = Left OutOfBoundsWrite
-    | otherwise = maybe (Left UninitializedMemoryWrite) parseValue (getMv (idx loc + offset loc) mem)
+    | otherwise = maybe 
+        (error "Mem.set: a memória desta região deveria estar alocada")
+        parseValue (getMv (idx loc + offset loc) mem)
     where 
         parseValue (_, lock) 
             | key loc /= lock = Left UseAfterFree -- se lock é valido, então a memória não pode ser -
-            | otherwise = 
-                insertMv (idx loc + offset loc) (case value of 
+            | otherwise = maybe
+                (error "Mem.set: a memória nessa região deveria estar alocada")
+                Right
+                (insertMv (idx loc + offset loc) (case value of 
                     Pcl.Number number -> Num number
                     Pcl.Loc loc' -> Mem.Loc loc'
-                ) mem
+                ) mem)
 
 
 malloc :: Int -> Mem -> (Pcl.Loc, Mem)
 malloc amount (memValues, mono) = 
     let locIdx = find amount (memValues, mono) in
-        let newMem = set locIdx amount (Bot, mono) memValues in
-            (newLoc Memoria locIdx mono amount, (newMem, mono + 1))
+    let newMem = set locIdx amount (Bot, mono) memValues in
+    (newLoc Memoria locIdx mono amount, (newMem, mono + 1))
 
 -- check if loc is in Mem
 -- check if the pointer doesnt overflow
@@ -75,9 +84,11 @@ malloc amount (memValues, mono) =
 free :: Pcl.Loc -> Int -> Mem -> Either ErrorKinds Mem
 free loc amount mem
     | local loc == Pilha = Left FreeOfMemoryNotOnHeap
-    | not (isInBounds loc) = Left OutOfBoundsFree
+    | not (isInBounds loc) = Left OutOfBoundsWrite
     | offset loc > 0 || size loc /= amount = Left PartialFree
-    | otherwise = maybe (Left UninitializedFree) freeMem (getMv (idx loc) mem)
+    | otherwise = maybe 
+        (error "Mem.free: a memória desta região deveria estar alocada")
+        freeMem (getMv (idx loc) mem)
     where 
         freeMem (_, lock)
             | key loc /= lock = Left DoubleFree

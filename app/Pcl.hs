@@ -46,23 +46,22 @@ instance Show Binop where
         Or -> " | " 
 
 data ErrorKinds = UserError 
-    | Any 
-    | UninitializedMemoryAcess 
-    | UninitializedMemoryWrite
+    -- | UninitializedMemoryAcess 
+    -- | UninitializedMemoryWrite
     | InitializedButEmptyMemoryAcess 
-    | ControlValueStackAcess
-    | UninitializedStackAcess
-    | UninitializedStackWrite
+    -- | ControlValueStackAcess
+    -- | UninitializedStackAcess
+    -- | UninitializedStackWrite
     | InitializedButEmptyStackAcess 
     | OutOfBoundsRead
     | OutOfBoundsWrite
-    | OutOfBoundsFree
+    | UseAfterFree
+    | ReturnOfStackVariableAdress
+    -- | OutOfBoundsFree
+    | FreeOfMemoryNotOnHeap
     | DoubleFree
     | PartialFree
-    | UseAfterFree
-    | FreeOfMemoryNotOnHeap
-    | UninitializedFree
-    | ReturnOfStackVariableAdress
+    -- | UninitializedFree
     deriving (Show)
 
 
