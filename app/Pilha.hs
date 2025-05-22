@@ -27,7 +27,6 @@ get :: Pcl.Loc -> Pilha -> Either ErrorKinds Value
 
 get loc pilha 
     | local loc == Memoria = error "chamada da função pilhaGet com um endereço de memória"
-    | idx loc == 0 = Left NullPtrDereference
     | not $ isInBounds loc = Left OutOfBoundsRead 
     | lock /= key loc = Left UseAfterFree
     | otherwise = case value of 
@@ -68,7 +67,6 @@ set :: Loc -> Value -> Pilha -> Either ErrorKinds Pilha
 --- se é, coloca o valor como valor de pilha
 set loc value pilha 
     | local loc == Memoria = error "chamada da função pilhaSet com um endereço de memória"
-    | idx loc == 0 = Left NullPtrDereference
     | not $ isInBounds loc = Left OutOfBoundsWrite
     | key loc /= lock = Left UseAfterFree
     | otherwise = maybe 
