@@ -25,6 +25,7 @@ get :: Loc -> Mem -> Either ErrorKinds Value
 
 get loc mem 
     | local loc == Pilha = error "chamada da função Mem.get com um endereço de pilha"
+    | idx loc == 0 = Left NullPtrDereference
     | not $ isInBounds loc = Left OutOfBoundsRead
     | key loc /= lock = Left UseAfterFree
     | otherwise = case value of
@@ -50,6 +51,7 @@ insertMv _ _ ([],_) = Nothing
 insert :: Loc -> Value -> Mem -> Either ErrorKinds Mem
 insert loc value mem
     | local loc == Pilha = error "chamada da função Mem.insert com um endereço de pilha"
+    | idx loc == 0 = Left NullPtrDereference
     | not (isInBounds loc) = Left OutOfBoundsWrite
     | key loc /= lock = Left UseAfterFree -- se lock é valido, então a memória não pode ser -
     | otherwise = maybe
@@ -76,6 +78,7 @@ malloc amount (memValues, mono) =
 free :: Pcl.Loc -> Int -> Mem -> Either ErrorKinds Mem
 free loc amount mem
     | local loc == Pilha = Left FreeOfMemoryNotOnHeap
+    | idx loc == 0 = Left FreeOfMemoryNotOnHeap
     | offset loc > 0 || size loc /= amount = Left PartialFree
     | key loc /= lock = Left DoubleFree
     | otherwise = Right $ first (set (idx loc) amount (Null, 0)) mem

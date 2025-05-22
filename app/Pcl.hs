@@ -46,6 +46,7 @@ instance Show Binop where
         Or -> " | " 
 
 data ErrorKinds = UserError 
+    | NullPtrDereference
     | UninitializedAcess 
     | OutOfBoundsRead
     | OutOfBoundsWrite
