@@ -3,6 +3,9 @@ import System.Environment (getArgs)
 import Parser (parser)
 import Interpreter (stepRun, fullRun)
 
+import PclFront
+
+
 run:: String -> String -> IO()
 run mode content = 
     case lexer content of

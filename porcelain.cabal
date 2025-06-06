@@ -71,6 +71,7 @@ executable porcelain
         Funcs
         Pilha
         Mem
+        PclFront
 
 
     -- LANGUAGE extensions used by modules in this package.
@@ -81,10 +82,13 @@ executable porcelain
         base ^>=4.17.2.1,
         containers,
         monad-control,
-        mtl
+        mtl,
+        ghc
 
     -- Directories containing source files.
-    hs-source-dirs:   app
+    hs-source-dirs:   
+        app
+        app/front
 
     -- Base language which the package is written in.
     default-language: GHC2021
