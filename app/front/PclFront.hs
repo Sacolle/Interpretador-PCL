@@ -1,9 +1,13 @@
+{-# LANGUAGE TupleSections #-}
+{-# LANGUAGE LambdaCase #-}
+
 module PclFront where
 
-import GHC.Utils.Misc (dropTail)
+import GHC.Utils.Misc (dropTail, filterOut)
 import Data.List
 import Data.Bifunctor
 import Control.Applicative
+import Data.Maybe
 
 concatComma :: Show a => [a] -> String
 concatComma = dropTail 2 . concatMap ((++", ") . show)
@@ -35,6 +39,7 @@ instance Show Binop where
 
 type Reg = Int
 
+-- TODO: Lidar com os tipos recursivos e as limitações
 data Tipo = Num | TupleT [Tipo] | Ptr Tipo | AliasT Tipo Reg | Rec (Tipo -> Tipo) | W | Fn [Tipo] Tipo
 
 instance Show Tipo where
@@ -62,6 +67,8 @@ instance Eq Tipo where
 data Exp = Var VarName
     | Value Value
     | Binop Binop Exp Exp
+    | Inc Exp Exp
+    | Dec Exp Exp
     | Not Exp
     | Deref Exp
     | Alias Exp
@@ -80,6 +87,7 @@ data Exp = Var VarName
     | While Exp Exp
     | CallFunc FuncName [Exp]
     | Stop
+    | NullPtr Tipo
 
 
 instance Show Exp where
@@ -87,6 +95,8 @@ instance Show Exp where
         Var name -> name
         Value value -> show value
         Binop op expr1 expr2 -> "(" ++ show expr1 ++ show op ++ show expr2 ++ ")"
+        Inc expr1 expr2 -> show expr1 ++ " += " ++ show expr2
+        Dec expr1 expr2 -> show expr1 ++ " -= " ++ show expr2
         Not expr -> "!(" ++ show expr ++ ")"
         Deref expr -> "*(" ++ show expr ++ ")"
         Alias expr -> "alias ("++ show expr ++")"
@@ -105,6 +115,7 @@ instance Show Exp where
         While expr1 expr2 -> "while( " ++ show expr1 ++ " )\n" ++ show expr2
         CallFunc name exprs -> name ++ "(" ++ concatComma exprs ++ ")" 
         Stop -> "stop"
+        NullPtr t -> "nullptr<" ++ show t ++ ">"
 
 
 data Function = DeclFunc FuncName [(VarName, Tipo)] Tipo Exp Function | Main Exp
@@ -115,9 +126,19 @@ data Global = DeclGlobal VarName Tipo Value Global | Func Function
 
 type Ast = Global
 
+isPtr :: Tipo -> Bool
+isPtr = \case 
+    Ptr _ -> True
+    AliasT _ _ -> True
+    _ -> False
 
+isLinear :: Tipo -> Bool
+isLinear = \case
+    Ptr _ -> True
+    TupleT list -> any isLinear list 
+    _ -> False
 
-data TypeError = UseOfMovedValue | UnmatchedTypes | Unimplemented
+data TypeError = UseOfMovedValue | UnmatchedTypes | Unimplemented | MissingType | BareLoc
 
 data Env = EnvT {
     gamma :: [(VarName, Tipo)],
@@ -126,20 +147,32 @@ data Env = EnvT {
 
 -- continue : matém o used e o gamma como estão
 
--- join: junta o gamma e o used
-join :: Env -> Env
-join EnvT { gamma, used } = EnvT {gamma = gamma ++ used, used = []}
+-- repairU: junta o gamma e o used
+repairU :: Env -> Env
+repairU EnvT { gamma, used } = EnvT {gamma = gamma ++ used, used = []}
 
 -- discard: discarta o used
 discardU :: Env -> Env
-discardU EnvT { gamma } = EnvT {gamma, used = []}
+discardU EnvT { gamma } = EnvT { gamma, used = [] }
+
+-- unite: faz a intersecção gamma1, gamma2
+interseccao :: Env -> Env -> Env
+interseccao EnvT { gamma=gamma1 } EnvT { gamma=gamma2 } = EnvT { gamma = gamma1 `intersect` gamma2, used = []}
+
+diff :: Env -> Env -> Env
+EnvT { gamma=gamma1 } `diff` EnvT{gamma = gamma2} = EnvT { gamma = filterOut (`elem` gamma2) gamma1, used = [] }
+
+
+-- checa se todos os elementos em gamma são não lineares
+nonlinear :: Env -> Bool
+nonlinear EnvT { gamma } = any (isLinear . snd) gamma
 
 -- has: checa se gamma tem x, retornando o tipo ou error
 -- isso move x de gamma para used
-get :: VarName -> Env -> Either TypeError (Env, Tipo) 
-get name EnvT { gamma, used } = do 
+getVar :: VarName -> Env -> Either TypeError (Env, Tipo) 
+getVar name EnvT { gamma, used } = do 
     (gamma', tipo) <- pop gamma
-    Right (EnvT { gamma = gamma', used = (name, tipo) : used}, tipo)
+    Right (EnvT { gamma = gamma', used = (name, tipo) : used }, tipo)
     where
         -- pega o elemento com o nome e remove de gamma
         pop :: [(VarName, Tipo)] -> Either TypeError ([(VarName, Tipo)], Tipo)
@@ -151,24 +184,18 @@ get name EnvT { gamma, used } = do
         pop [] = Left UseOfMovedValue
 
 -- add: adiciona x de tipo T em gamma
-add :: (VarName, Tipo) -> Env -> Env
-add item EnvT { gamma, used } = EnvT { gamma = item : gamma, used }
-
-{-
-do 
-    Type () <$ check left <*> check right
--}
-
+addVar :: (VarName, Tipo) -> Env -> Env
+addVar item EnvT { gamma, used } = EnvT { gamma = item : gamma, used }
 
 check :: (Env, Exp) -> Either TypeError (Env, Tipo)
-
 -- rule for var
-check (env, Var x) = get x env
+check (env, Var x) = getVar x env
 
 -- rule for value
 check (env, Value (Number _)) = Right (env, Num)
--- TODO: tiping of location
-check (env, Value (Loc _)) = Right (env, Num)
+
+-- NOTE: tiping of location cannot be know if it is bare
+check (_, Value (Loc _)) = Left BareLoc
 
 -- TODO: check if the operand is valid for the types
 check (env, Binop op e1 e2) = do
@@ -188,6 +215,28 @@ check (env, Binop op e1 e2) = do
             _ -> Left UnmatchedTypes
         _ -> Left UnmatchedTypes
 
+check (env, Inc expr1 expr2) = do
+    (env', t) <- check (env, expr1)
+    if case t of Ptr _ -> True; AliasT _ _ -> True; _ -> False then do
+        (env2, t2) <- check (repairU env', expr2)
+        if t2 == Num then 
+            Right (discardU env2, TupleT [])
+        else
+            Left UnmatchedTypes
+    else
+        Left UnmatchedTypes
+
+check (env, Dec expr1 expr2) = do
+    (env', t) <- check (env, expr1)
+    if case t of Ptr _ -> True; AliasT _ _ -> True; _ -> False then do
+        (env2, t2) <- check (repairU env', expr2)
+        if t2 == Num then 
+            Right (discardU env2, TupleT [])
+        else
+            Left UnmatchedTypes
+    else
+        Left UnmatchedTypes
+
 check (env, Not expr) = do
     (env', t) <- check (env, expr)
     case t of 
@@ -197,20 +246,20 @@ check (env, Not expr) = do
 
 check (env, Deref expr) = do 
     (env', t) <- check (env, expr)
-    Right (join env', t)
+    Right (repairU env', t)
 
 -- get alias of ptr type
 check (env, Alias expr) = do
     (env', t) <- check (env, expr)
     case t of
-        Ptr t' -> Right (join env', AliasT t' 0)
+        Ptr t' -> Right (repairU env', AliasT t' 0)
         _ -> Left UnmatchedTypes
 
 check (env, AliasDeref expr) = do
     (env', t) <- check (env, expr)
     case t of
         Ptr t' -> case t' of 
-            Ptr _ -> Right (join env', AliasT t' 0)
+            Ptr _ -> Right (repairU env', AliasT t' 0)
             _ -> Left UnmatchedTypes
         _ -> Left UnmatchedTypes
 
@@ -254,7 +303,7 @@ check (env, LetTuple names t expr) = do
     case t of 
         TupleT tipos -> 
             if t == t' then 
-                Right (foldr add env' (zip names tipos), TupleT []) 
+                Right (foldr addVar env' (zip names tipos), TupleT []) 
             else 
                 Left UnmatchedTypes
         _ -> Left UnmatchedTypes
@@ -263,7 +312,7 @@ check (env, LetTuple names t expr) = do
 check (env, LetVar name t expr) = do
     (env', t') <- check (env, expr)
     if t == t' then 
-        Right (add (name, t) (discardU env'), TupleT [])
+        Right (addVar (name, t) (discardU env'), TupleT [])
     else
         Left UnmatchedTypes
 
@@ -279,42 +328,40 @@ check (env, Assign expr1 expr2) = do
 -- TODO: validar o uso de tipos lineares
 check (env, Swap expr1 expr2) = do
     (env', t) <- check (env, expr1)
-    (env'', t') <- check (join env', expr2)
+    (env'', t') <- check (repairU env', expr2)
     if t == t' then 
-        Right (join env'', TupleT [])
+        Right (repairU env'', TupleT [])
     else
         Left UnmatchedTypes
 
 check (env, SwapDeref expr1 expr2) = do
     (env', t) <- check (env, expr1)
-    (env'', t') <- check (join env', expr2)
+    (env'', t') <- check (repairU env', expr2)
     case t' of 
         Ptr t'' -> if t == t'' then 
-            Right (join env'', TupleT [])
+            Right (repairU env'', TupleT [])
         else
             Left UnmatchedTypes
         _ -> Left UnmatchedTypes
 
--- TODO: regra para juntar ambientes
--- TODO: dicartar no fim dos braços
+-- NOTE: imagina-se que usando o Scope ali ele elimina as lineares e faz o check automático
 check (env, If expr1 expr2 expr3) = do 
     (env', t) <- check (env, expr1) 
     if t == Num then do
-        (env'', t2) <- check (env', expr2) 
-        (env''', t3) <- check (env', expr3) 
+        (env2, t2) <- check (env', Scope expr2) 
+        (env3, t3) <- check (env', Scope expr3) 
         if t2 == t3 then 
-            Right (env''', t3) 
+            Right (interseccao env2 env3, t3) 
         else 
             Left UnmatchedTypes
     else
         Left UnmatchedTypes
 
--- TODO: dicartar no fim do corpo
--- e retornar unit
+-- retornar unit
 check (env, While expr1 expr2) = do 
     (env', t) <- check (env, expr1) 
     if t == Num then
-        check (env', expr2)
+        fmap (seq $ TupleT []) <$> check (env', Scope expr2)
     else
         Left UnmatchedTypes
 
@@ -322,3 +369,5 @@ check (env, While expr1 expr2) = do
 check (env, CallFunc name args) = Left Unimplemented
 
 check (env, Stop) = Right (env, TupleT [])
+
+check (env, NullPtr tipo) = Right (env, Ptr tipo)
