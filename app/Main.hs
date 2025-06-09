@@ -3,9 +3,12 @@ import System.Environment (getArgs)
 import Parser (parser)
 import Interpreter (stepRun, fullRun)
 
-import PclFront
+import PclFront (testMain)
 
+main :: IO ()
+main = PclFront.testMain
 
+{- 
 run:: String -> String -> IO()
 run mode content = 
     case lexer content of
@@ -27,5 +30,6 @@ main = do
             content <- readFile file
             run mode content
         _ -> putStrLn "Unrecognized arguments"
+-}
 
 
