@@ -226,7 +226,7 @@ check (env, Var x) = do
     else do
         tipo <- getVar x env 
         case tipo of
-            Fn _ _ -> Left $ UnmatchedTypes ("Nome de variável não pode ser usada como variável")
+            Fn _ _ -> Left $ UnmatchedTypes "Nome de variável não pode ser usada como variável"
             _ -> Right (env, tipo)
 
 
@@ -274,6 +274,9 @@ check (env, Binop op e1 e2) = do
                 else 
                     Left $ UnmatchedTypes ("Comparação não está definido para os tipos " ++ show t1 ++ ", " ++ show t2)
 
+-- G(x), U() ->  x 		   -> G(); U(x)
+-- G(x), U() ->  f(x) 	   -> G(); U()
+-- G(x), U() ->  f(x) += n -> G(); U()
 check (env, Inc expr1 expr2) = do
     (env', t) <- check (env, expr1)
     if isPtr t then do
@@ -327,6 +330,9 @@ check (env, Comp expr1 expr2) = do
 -- se todas elas nesse conjunto são não lineares
 -- retorna env `intersect` env' -> 
 -- isso resulta nas vars que existiam em env menos as vars de env' e os lineares consumidos em env'
+-- G |- e : T | G'    nonlinear G'\G 
+------------------------------------
+-- G |- { e } : T | G `intersect` G' 
 check (env, Scope expr) = do
     (env', t) <- check (env, expr)
     if nonlinear (env' `diff` env) then 
