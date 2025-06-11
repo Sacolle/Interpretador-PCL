@@ -3,8 +3,12 @@
 
 module PclFront where
 
-import GHC.Utils.Misc (dropTail, filterOut)
-import Data.List
+import GHC.Utils.Misc (dropTail)
+import Data.Function
+
+import qualified Data.Map as Map
+import qualified Data.Set as Set
+import qualified Data.Maybe as Maybe
 
 concatComma :: Show a => [a] -> String
 concatComma = dropTail 2 . concatMap ((++", ") . show)
@@ -50,31 +54,26 @@ isCompBinop = \case
     _ -> False
 
 
-type Reg = Int
 
 -- TODO: Lidar com os tipos recursivos e as limitações
-data Tipo = Num | TupleT [Tipo] | Ptr Tipo | AliasT Tipo Reg | Rec (Tipo -> Tipo) | W | Fn [Tipo] Tipo
+data Tipo = Num | Ptr Tipo | AliasT Tipo Reg | Fn [Tipo] Tipo
+
+unit :: Tipo
+unit = Num
 
 instance Show Tipo where
     show t = case t of
         Num -> "Int"
-        TupleT list -> concatComma list
         Ptr t1 -> "*" ++ show t1
         AliasT t1 reg -> "@" ++ show t1 ++ "'" ++ show reg 
-        Rec f -> "uw. " ++ show (f W)
-        W -> "w"
         Fn args ret -> "(" ++ concatComma args ++ ") -> " ++ show ret
 
 instance Eq Tipo where 
     (==) t1 t2 = case t1 of
         Num -> case t2 of Num -> True; _ -> False
-        TupleT list1 -> case t2 of TupleT list2 -> list1 == list2; _ -> False
         Ptr t' -> case t2 of Ptr t'' -> t' == t''; _ -> False
         AliasT t' _ -> case t2 of AliasT t'' _ -> t' == t''; _ -> False 
         Fn args ret -> case t2 of Fn args' ret' -> args == args' && ret == ret'; _ -> False
-
-        W -> case t2 of W -> True; _ -> False
-        Rec f -> case t2 of Rec f' -> f W == f' W; _ -> False  
 
 
 data Exp = Var VarName
@@ -83,6 +82,7 @@ data Exp = Var VarName
     | Inc Exp Exp
     | Dec Exp Exp
     | Not Exp
+    | Ref VarName
     | Deref Exp
     | Alias Exp
     | AliasDeref Exp
@@ -90,8 +90,6 @@ data Exp = Var VarName
     | Scope Exp
     | New Tipo Exp 
     | Delete Exp Exp 
-    | Tuple [Exp]
-    | LetTuple [VarName] Tipo Exp
     | LetVar VarName Tipo Exp
     | Assign Exp Exp
     | Swap Exp Exp
@@ -111,6 +109,7 @@ instance Show Exp where
         Inc expr1 expr2 -> show expr1 ++ " += " ++ show expr2
         Dec expr1 expr2 -> show expr1 ++ " -= " ++ show expr2
         Not expr -> "!(" ++ show expr ++ ")"
+        Ref name -> "&" ++ name
         Deref expr -> "*(" ++ show expr ++ ")"
         Alias expr -> "alias ("++ show expr ++")"
         AliasDeref expr -> "alias* ("++ show expr ++")"
@@ -118,8 +117,6 @@ instance Show Exp where
         Scope expr -> "{\n"++ show expr ++ "\n}"
         New t expr  -> "new<" ++ show t ++ ">(" ++ show expr ++ ")" 
         Delete expr1 expr2 -> "delete(" ++ show expr1 ++ ", " ++ show expr2 ++ ")"
-        Tuple exprs -> "(" ++ concatComma exprs ++ "))"
-        LetTuple vars t expr  -> "let (" ++ concatComma vars ++ "): " ++ show t ++ " := (" ++ show expr ++ ")"
         LetVar name t expr -> "let " ++ name ++ ": " ++ show t ++ " := (" ++ show expr ++ ")"
         Assign expr1 expr2 -> show expr1 ++ " := " ++ show expr2 
         Swap expr1 expr2 -> show expr1 ++ " :=: " ++ show expr2 
@@ -149,7 +146,6 @@ isPtr = \case
 isLinear :: Tipo -> Bool
 isLinear = \case
     Ptr _ -> True
-    TupleT list -> any isLinear list 
     _ -> False
 
 match :: (Show a, Eq a) => a -> a -> b -> Either TypeError b
@@ -162,63 +158,114 @@ match t1 t2 res =
 data TypeError = UseOfMovedValue | UnmatchedTypes String| Unimplemented | MissingType | BareLoc | VarNotFound | EndOfScopeWithLinVar
     deriving (Show)
 
+type Reg = Int
+
+type TypeEnv = Map.Map VarName Tipo
+-- fst outlives snd
+type RegEnv = Set.Set (Reg, Reg)
+type LoanEnv = Map.Map Reg VarName
+
 data Env = EnvT {
-    gamma :: [(VarName, Tipo)],
-    used :: [(VarName, Tipo)]
+    gamma :: TypeEnv,
+    used :: TypeEnv,
+    regions :: RegEnv,
+    loans :: LoanEnv,
+    ident :: Reg
 }
 
--- continue : matém o used e o gamma como estão
 
 -- repairU: junta o gamma e o used
 repairU :: Env -> Env
-repairU EnvT { gamma, used } = EnvT {gamma = gamma ++ used, used = []}
+repairU EnvT { gamma, used, regions, loans, ident } = EnvT { gamma = Map.union gamma used, used = Map.empty, regions, loans, ident }
 
 -- discard: discarta o used
 discardU :: Env -> Env
-discardU EnvT { gamma } = EnvT { gamma, used = [] }
-
--- unite: faz a intersecção gamma1, gamma2
-interseccao :: Env -> Env -> Env
-interseccao EnvT { gamma=gamma1 } EnvT { gamma=gamma2 } = EnvT { gamma = gamma1 `intersect` gamma2, used = []}
-
-diff :: Env -> Env -> Env
-EnvT { gamma=gamma1 } `diff` EnvT{gamma = gamma2} = EnvT { gamma = filterOut (`elem` gamma2) gamma1, used = [] }
-
+discardU EnvT { gamma, regions, loans, ident } = EnvT { gamma, used = Map.empty, regions, loans, ident }
 
 -- checa se todos os elementos em gamma são não lineares
-nonlinear :: Env -> Bool
-nonlinear EnvT { gamma } = not $ any (isLinear . snd) gamma
-
--- useVar: checa se gamma tem x, retornando o tipo ou error
--- isso move x de gamma para used
-useVar :: VarName -> Env -> Either TypeError (Env, Tipo) 
-useVar name EnvT { gamma, used } = do 
-    (gamma', tipo) <- pop gamma
-    Right (EnvT { gamma = gamma', used = (name, tipo) : used }, tipo)
-    where
-        -- pega o elemento com o nome e remove de gamma
-        pop :: [(VarName, Tipo)] -> Either TypeError ([(VarName, Tipo)], Tipo)
-        pop ((n, tipo) : resto)
-            | n == name = Right (resto, tipo)
-            | otherwise = do 
-                (gamma', t) <- pop resto
-                Right ((n, tipo) : gamma', t)
-        pop [] = Left UseOfMovedValue
+nonlinear :: Map.Map VarName Tipo -> Bool
+nonlinear gamma = not $ any (isLinear . snd) (Map.toList gamma)
 
 getVar :: VarName -> Env -> Either TypeError Tipo
-getVar name EnvT {gamma}= maybe (Left VarNotFound) (Right . snd) (find ((==)name . fst) gamma)
+getVar name EnvT { gamma } = maybe (Left VarNotFound) Right (Map.lookup name gamma)
+-- useVar: checa se gamma tem x, retornando o tipo ou error
+-- isso move x de gamma para used
+-- TODO: matar aqui as loans associadas a variável?
+useVar :: VarName -> Env -> Either TypeError (Env, Tipo) 
+useVar name env = do
+    tipo <- getVar name env
+    let EnvT { gamma, used, regions, ident } = env
+    let newLoans = loans $ removeLoan name env
+    let newGamma = Map.delete name gamma
+    let newUsed = Map.insert name tipo used
+    Right (EnvT { gamma = newGamma, used = newUsed, regions, loans = newLoans, ident }, tipo)
+
 
 isVarLin :: VarName -> Env -> Either TypeError Bool
 isVarLin name env = isLinear <$> getVar name env
 
 -- add: adiciona x de tipo T em gamma
-addVar :: (VarName, Tipo) -> Env -> Env
-addVar item EnvT { gamma, used } = EnvT { gamma = item : gamma, used }
+addVar :: VarName -> Tipo -> Env -> Env
+addVar name t EnvT { gamma, used, loans, regions, ident } = EnvT { 
+    gamma = Map.insert name t gamma, 
+    used, loans, regions, ident 
+}
+
+getLabel :: Env -> (Env, Reg)
+getLabel EnvT { gamma, used, regions, loans, ident } = (EnvT { gamma, used, regions, loans, ident = ident + 1 }, ident)
+
+-- add region relation
+-- remove region relation is a form of scope ending,
+-- então não é necessário adcionar a operação, só restaurar o env, neh?
+addRegRelation :: (Reg, Reg) -> Env -> Env
+addRegRelation rel EnvT { gamma, used, regions, loans, ident } =
+    EnvT { 
+        gamma, 
+        used, 
+        regions = reflexive $ Set.insert rel regions, 
+        loans, 
+        ident
+    } 
+
+reflexive :: RegEnv -> RegEnv
+-- for every pair (r1 : r2)
+-- if there is *another* pair in the list, such as (r0 : r1),
+-- then add (r0 : r2). repeat until the set no longer grows
+reflexive regEnv = 
+    let size = Set.size regEnv in
+    let regEnv' = foldMap gatter regEnv in
+    if Set.size regEnv' > size then reflexive regEnv' else regEnv'
+    where
+        gatter (r1, r2) = Set.foldr' (
+            \(r0', r1') acc -> 
+                if r1' == r1 then 
+                    Set.insert (r0', r2) acc 
+                else 
+                    acc
+            ) 
+            regEnv regEnv
+
+
+addLoan :: Reg -> VarName -> Env -> Env 
+addLoan r name EnvT { gamma, used, regions, loans, ident } = 
+    EnvT { gamma, used, regions, loans = Map.insert r name loans, ident} 
+
+removeLoan :: VarName -> Env -> Env 
+removeLoan name EnvT { gamma, used, regions, loans, ident } = 
+    EnvT { gamma, used, regions, loans = Map.filter (/= name) loans, ident} 
+-- TODO: validar com casos de uso a implementação
+-- um acesso é válido se o empréstimo existe para a região
+-- isso pode ser invalidado caso a região que fez o empréstimo tenha saido de escopo
+-- ou se o elemento emprestado tenha sido manualmente removida (delete)
+isAcessValid :: Reg -> Env -> Bool
+isAcessValid r EnvT { loans } = Maybe.isJust $ Map.lookup r loans 
+
 
 check :: (Env, Exp) -> Either TypeError (Env, Tipo)
 -- rule for var
 -- if var is non linear, just get the type
 -- else get the type and move the var to the used space
+-- TODO: remover x do set de loans aqui ou dps, idk?
 check (env, Var x) = do
     isLin <- isVarLin x env 
     if isLin then 
@@ -229,6 +276,15 @@ check (env, Var x) = do
             Fn _ _ -> Left $ UnmatchedTypes "Nome de variável não pode ser usada como variável"
             _ -> Right (env, tipo)
 
+-- NOTE: mutate env with the lifetime stuff
+check (env, Ref name) = do 
+    t <- getVar name env
+    case t of
+        Fn _ _ -> Left $ UnmatchedTypes "Nome de variável não pode ser usada como variável"
+        _ -> do 
+            let (env', reg) = getLabel env
+            Right (env', AliasT t reg)
+         
 
 -- rule for value
 check (env, Value (Number _)) = Right (env, Num)
@@ -265,7 +321,7 @@ check (env, Binop op e1 e2) = do
                         Ptr t' | t == t' -> Right Num
                         rest -> Left $ UnmatchedTypes ("Em Comparação " ++ show rest ++ " não encaixa com *" ++ show t)
                     AliasT t reg -> case t2 of -- NOTE: sub regions
-                        AliasT t' reg' | t == t' && reg == reg' -> Right Num
+                        AliasT t' _ | t == t' -> Right Num
                         rest -> Left $ UnmatchedTypes ("Em Comparação " ++ show rest ++ " não encaixa com @" ++ show t ++ "'" ++ show reg)
                     rest -> Left $ UnmatchedTypes ("Comparação não está definido para tipo " ++ show rest)
             | otherwise = -- exclusivamente Mult
@@ -281,7 +337,7 @@ check (env, Inc expr1 expr2) = do
     (env', t) <- check (env, expr1)
     if isPtr t then do
         (env2, t2) <- check (repairU env', expr2)
-        match t2 Num (discardU env2, TupleT [])
+        match t2 Num (discardU env2, unit)
     else
         Left $ UnmatchedTypes ("Operador da esquerda deve ser um ponteiro, o atual é " ++ show t)
 
@@ -289,7 +345,7 @@ check (env, Dec expr1 expr2) = do
     (env', t) <- check (env, expr1)
     if isPtr t then do
         (env2, t2) <- check (repairU env', expr2)
-        match t2 Num (discardU env2, TupleT [])
+        match t2 Num (discardU env2, unit)
     else
         Left $ UnmatchedTypes ("Operador da esquerda deve ser um ponteiro, o atual é " ++ show t)
 
@@ -300,25 +356,30 @@ check (env, Not expr) = do
         AliasT _ _ -> Right (discardU env', Num)
         _ -> Left $ UnmatchedTypes ("Operador not só opera sobre ponteiros e aliases, o atual é " ++ show t)
 
+
 -- deref *T -> T if T is nonlinear
+-- TODO: validate the deref on the alias
 check (env, Deref expr) = do 
     (env', t) <- check (env, expr)
     case t of 
         Ptr innerT | not $ isLinear innerT -> Right (repairU env', innerT)
+        AliasT innerT reg | not (isLinear innerT) && isAcessValid reg env' -> Right (repairU env', innerT)
         _ -> Left $ UnmatchedTypes ("Só pode-se desreferenciar ponteiros para valores não lineares. O atual é " ++ show t)
 
 -- get alias of ptr type
 check (env, Alias expr) = do
     (env', t) <- check (env, expr)
+    let (env'', ident) = getLabel env' 
     case t of
-        Ptr t' -> Right (repairU env', AliasT t' 0)
+        Ptr t' -> Right (repairU env'', AliasT t' ident)
         _ -> Left $ UnmatchedTypes ("Só pode-se fazer alias de ponteiros. O atual é " ++ show t)
 
 check (env, AliasDeref expr) = do
     (env', t) <- check (env, expr)
+    let (env'', ident) = getLabel env' 
     case t of
         Ptr t' -> case t' of 
-            Ptr _ -> Right (repairU env', AliasT t' 0)
+            Ptr _ -> Right (repairU env'', AliasT t' ident)
             _ -> Left $ UnmatchedTypes ("Só pode-se fazer alias deref de ponteiros a ponteiros. O atual é " ++ show t)
         _ -> Left $ UnmatchedTypes ("Só pode-se fazer alias de ponteiros. O atual é " ++ show t)
 
@@ -335,8 +396,14 @@ check (env, Comp expr1 expr2) = do
 -- G |- { e } : T | G `intersect` G' 
 check (env, Scope expr) = do
     (env', t) <- check (env, expr)
-    if nonlinear (env' `diff` env) then 
-        Right (env `interseccao` env', t)
+    if nonlinear ((Map.difference `on` gamma) env' env) then 
+        Right (EnvT { 
+            gamma = (Map.intersection `on` gamma) env env',
+            used = Map.empty,
+            regions = regions env,
+            loans = (Map.intersection `on` loans) env env',
+            ident = ident env'
+        }, t)
     else
         Left EndOfScopeWithLinVar
 
@@ -347,34 +414,31 @@ check (env, New t expr) = do
 check (env, Delete expr1 expr2) = do
     (env', _) <- check (env, expr1)
     (env'', t2) <- check (discardU env', expr2)
-    match t2 Num (discardU env'', TupleT [])
-
--- o código é, aplica fmap TupleT a saída de foldr
--- no caso de Either (saida de foldr), <$> (fmap) aplica no Right
-check (env, Tuple exprs) = fmap TupleT <$> foldr pass (Right (env, [])) exprs
-    where 
-        pass e (Right (envAcc, list)) = do
-            (envAcc', t) <- check (envAcc, e)
-            Right (discardU envAcc', t : list) 
-        pass _ (Left err) = Left err
-
--- NOTE: checar se tá certa a adição de variables to Gamma
-check (env, LetTuple names t expr) = do
-    (env', t') <- check (env, expr)
-    case t of 
-        TupleT tipos -> match t t' (foldr addVar env' (zip names tipos), TupleT []) 
-        _ -> Left $ UnmatchedTypes ("Tipo do lado esquerdo deve ser uma tupla. Atual é " ++ show t)
+    match t2 Num (discardU env'', unit)
 
 --NOTE: usar o tipo da expressão?
 check (env, LetVar name t expr) = do
     (env', t') <- check (env, expr)
-    match t t' (addVar (name, t) (discardU env'), TupleT [])
+    case t of
+        AliasT innerT lr ->
+            case t' of 
+                AliasT innerT' rr | innerT == innerT' -> 
+                    Right (addRegRelation (rr, lr) (addVar name t (discardU env')), unit)
+                _ -> Left $ UnmatchedTypes "Lado direito da declaração deve ser um Alias T"
+        _ -> match t t' (addVar name t (discardU env'), unit)
 
+-- TODO: discartar a relação que existia para a região do lado esquerdo (lr) (será que é necessário na real?)
 check (env, Assign expr1 expr2) = do
     (env', t) <- check (env, expr1)
     (env'', t') <- check (discardU env', expr2)
-    if not (isLinear t) && not (isLinear t') then 
-        match t t' (discardU env'', TupleT [])
+    if  not (isLinear t) && not (isLinear t') then 
+        case t of
+            AliasT innerT lr ->
+                case t' of 
+                    AliasT innerT' rr | innerT == innerT' -> 
+                        Right (addRegRelation (rr, lr) (discardU env''), unit)
+                    _ -> Left $ UnmatchedTypes "Lado direito da declaração deve ser um Alias T"
+            _ -> match t t' (discardU env'', unit)
     else
         Left $ UnmatchedTypes ("Os dois tipos da atribuição devem ser não lineares. Os atuais são " ++ show t ++ ", " ++ show t')
 
@@ -382,14 +446,31 @@ check (env, Assign expr1 expr2) = do
 check (env, Swap expr1 expr2) = do
     (env', t) <- check (env, expr1)
     (env'', t') <- check (repairU env', expr2)
-    match t t' (repairU env'', TupleT [])
+    case t of
+        AliasT innerT lr ->
+            case t' of 
+                AliasT innerT' rr | innerT == innerT' -> 
+                    Right (addRegRelation (lr, rr) $ addRegRelation (rr, lr) (repairU env''), unit)
+                _ -> Left $ UnmatchedTypes "Lado direito da declaração deve ser um Alias T"
+        _ -> match t t' (repairU env'', unit)
 
 check (env, SwapDeref expr1 expr2) = do
     (env', t) <- check (env, expr1)
     (env'', t') <- check (repairU env', expr2)
-    case t' of 
-        Ptr t'' -> match t t'' (repairU env'', TupleT [])
-        _ -> Left $ UnmatchedTypes ("Elemento do lado direito deve ser um ponteiro para um ponteiro. Atual é " ++ show t')
+    tOfPtr <- innerOfPtr t'
+    case t of 
+        AliasT innerT lr ->
+            case tOfPtr of
+                AliasT innerT' rr | innerT == innerT' -> 
+                    Right (addRegRelation (lr, rr) $ addRegRelation (rr, lr) (repairU env''), unit)
+                _ -> Left $ UnmatchedTypes "Lado direito interno da declaração deve ser um Alias T"
+        _ -> match t t' (repairU env'', unit)
+    where
+        innerOfPtr = \case
+            AliasT t _ -> Right t
+            Ptr t -> Right t
+            t' -> Left $ UnmatchedTypes ("Elemento do lado direito deve ser um ponteiro para um ponteiro. Atual é " ++ show t')
+
 
 -- NOTE: imagina-se que usando o Scope ali ele elimina as lineares e faz o check automático
 check (env, If expr1 expr2 expr3) = do 
@@ -397,7 +478,13 @@ check (env, If expr1 expr2 expr3) = do
     if t == Num then do
         (env2, t2) <- check (env', Scope expr2) 
         (env3, t3) <- check (env', Scope expr3) 
-        match t2 t3 (env2 `interseccao` env3, t3) 
+        match t2 t3 (EnvT {
+            gamma = (Map.intersection `on` gamma) env2 env3,
+            used = Map.empty,
+            regions = regions env,
+            loans = (Map.intersection  `on` loans) env2 env3,
+            ident = max (ident env2) (ident env3)
+        }, t3)
     else
         Left $ UnmatchedTypes ("Tipo da expressão de comparação deve ser inteiro. Atual é " ++ show t)
 
@@ -406,27 +493,31 @@ check (env, While expr1 expr2) = do
     (env', t) <- check (env, expr1) 
     if t == Num then
         -- apply to the right side of either (<$>)
-        -- replace the snd element with TupleT [] (<$)
+        -- replace the snd element with unit [] (<$)
         -- isso pois funtores são aplicados ao segundo elemento das tuplas
-        (<$) (TupleT []) <$> check (env', Scope expr2)
+        (<$) unit <$> check (env', Scope expr2)
     else
         Left $ UnmatchedTypes ("Tipo da expressão de comparação deve ser inteiro. Atual é " ++ show t)
 
--- TODO 
 check (env, CallFunc name args) = do
     tipo <- getVar name env
     case tipo of
-        Fn tArgs ret -> do
-            (resEnv, tipoDosArgs) <- foldr pass (Right (env, [])) args
-            match tipoDosArgs tArgs (resEnv, ret) 
+        Fn tArgs ret -> (,ret) <$> foldr pass (Right env) (zip args tArgs)
         rest -> Left $ UnmatchedTypes ("O nome da função não está associado a uma função. Esta associado a " ++ show rest)
     where 
-        pass e (Right (envAcc, list)) = do
-            (envAcc', t) <- check (envAcc, e)
-            Right (discardU envAcc', t : list) 
+        pass :: (Exp, Tipo) -> Either TypeError Env -> Either TypeError Env
+        pass (e, tipo) (Right envAcc) = do
+            (envAcc', checkedTipo) <- check (envAcc, e)
+            case checkedTipo of
+                AliasT innerT lr ->
+                    case tipo of 
+                        AliasT innerT' rr | innerT == innerT' -> 
+                            Right (addRegRelation (rr, lr) (discardU envAcc'))
+                        _ -> Left $ UnmatchedTypes "Argumento da declaração deve ser um Alias T"
+                _ -> match checkedTipo tipo (discardU envAcc')
         pass _ (Left err) = Left err
 
-check (env, Stop) = Right (env, TupleT [])
+check (env, Stop) = Right (env, unit)
 
 check (env, NullPtr tipo) = Right (env, Ptr tipo)
 
@@ -434,7 +525,7 @@ check (env, NullPtr tipo) = Right (env, Ptr tipo)
 checkFn :: (Env, Function) -> Either TypeError (Env, Tipo)
 checkFn (env, DeclFunc name args retT body nextFn) = do
     -- adiciona o tipo da função na lista antes de validar, pois o corpo pode chamar a função recursivamente
-    (env', t) <- check (addVar (name, Fn (map snd args) retT) env, body)
+    (env', t) <- check (addVar name (Fn (map snd args) retT) env, body)
     if t == retT then 
         checkFn (env', nextFn) 
     else
@@ -444,7 +535,14 @@ checkFn (env, Main body) = check (env, Scope body)
 
 
 checkProgram :: Ast -> Either TypeError Tipo
-checkProgram ast = snd <$> checkFn (EnvT { gamma = [], used = []}, ast)
+checkProgram ast = snd <$> checkFn (
+    EnvT { 
+        gamma = Map.empty, 
+        used = Map.empty, 
+        regions = Set.empty, 
+        loans = Map.empty, 
+        ident = 10000
+    }, ast)
 
 (.>) :: Exp -> Exp -> Exp
 (.>) = Comp
@@ -452,11 +550,15 @@ checkProgram ast = snd <$> checkFn (EnvT { gamma = [], used = []}, ast)
 infixr 8 .> 
 
 
+ex1 :: Function
 ex1 = Main (
-    LetVar "x" (Ptr $ Ptr Num) (New (Ptr Num) (Value (Number 1))) .>
-    LetVar "y" (AliasT (Ptr Num) 0) (Alias (Var "x")) .>
-    Var "y" .> 
-    Deref (Var "x")
+    LetVar "y" (AliasT Num 0) (Alias (NullPtr Num)) .>
+    Scope (
+        LetVar "x" (Ptr Num) (New Num (Value (Number 1))) .>
+        Assign (Var "y") (Alias (Var "x")) .>
+        Delete (Var "x") (Value (Number 1))
+    ) .>
+    Deref (Var "y")
     )
 
 testMain :: IO ()
