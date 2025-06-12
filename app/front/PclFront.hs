@@ -84,8 +84,8 @@ data Exp = Var VarName
     | Not Exp
     | Ref VarName
     | Deref Exp
-    | Alias Exp
-    | AliasDeref Exp
+    | Alias VarName
+    | AliasDeref VarName
     | Comp Exp Exp
     | Scope Exp
     | New Tipo Exp 
@@ -99,6 +99,7 @@ data Exp = Var VarName
     | CallFunc FuncName [Exp]
     | Stop
     | NullPtr Tipo
+    | NullAlias Tipo
 
 
 instance Show Exp where
@@ -126,6 +127,7 @@ instance Show Exp where
         CallFunc name exprs -> name ++ "(" ++ concatComma exprs ++ ")" 
         Stop -> "stop"
         NullPtr t -> "nullptr<" ++ show t ++ ">"
+        NullAlias t -> "nullalias<" ++ show t ++ ">"
 
 
 data Function = DeclFunc FuncName [(VarName, Tipo)] Tipo Exp Function | Main Exp
@@ -155,7 +157,14 @@ match t1 t2 res =
     else 
         Left $ UnmatchedTypes ("Tipo " ++ show t1 ++ " não se encaixa com " ++ show t2)
 
-data TypeError = UseOfMovedValue | UnmatchedTypes String| Unimplemented | MissingType | BareLoc | VarNotFound | EndOfScopeWithLinVar
+data TypeError = UseOfMovedValue 
+    | UnmatchedTypes String
+    | Unimplemented 
+    | MissingType 
+    | BareLoc 
+    | VarNotFound 
+    | EndOfScopeWithLinVar 
+    | InvalidAliasAcess Env
     deriving (Show)
 
 type Reg = Int
@@ -171,7 +180,7 @@ data Env = EnvT {
     regions :: RegEnv,
     loans :: LoanEnv,
     ident :: Reg
-}
+} deriving (Show)
 
 
 -- repairU: junta o gamma e o used
@@ -219,22 +228,23 @@ getLabel EnvT { gamma, used, regions, loans, ident } = (EnvT { gamma, used, regi
 -- então não é necessário adcionar a operação, só restaurar o env, neh?
 addRegRelation :: (Reg, Reg) -> Env -> Env
 addRegRelation rel EnvT { gamma, used, regions, loans, ident } =
+    let transRegions = transitive $ Set.insert rel regions in
     EnvT { 
         gamma, 
         used, 
-        regions = reflexive $ Set.insert rel regions, 
-        loans, 
+        regions = transRegions, 
+        loans = propateLoans transRegions loans, 
         ident
     } 
 
-reflexive :: RegEnv -> RegEnv
+transitive :: RegEnv -> RegEnv
 -- for every pair (r1 : r2)
 -- if there is *another* pair in the list, such as (r0 : r1),
 -- then add (r0 : r2). repeat until the set no longer grows
-reflexive regEnv = 
+transitive regEnv = 
     let size = Set.size regEnv in
     let regEnv' = foldMap gatter regEnv in
-    if Set.size regEnv' > size then reflexive regEnv' else regEnv'
+    if Set.size regEnv' > size then transitive regEnv' else regEnv'
     where
         gatter (r1, r2) = Set.foldr' (
             \(r0', r1') acc -> 
@@ -245,10 +255,28 @@ reflexive regEnv =
             ) 
             regEnv regEnv
 
-
+-- quando adiciona um emprestimo, propaga para todas as regiões na relação r : r'
+-- então quando adiciona (0', x) com (0' : 1'), também adiciona (1', x)
+-- TODO: verificar o caso ex3 funciona nessa relação
 addLoan :: Reg -> VarName -> Env -> Env 
 addLoan r name EnvT { gamma, used, regions, loans, ident } = 
-    EnvT { gamma, used, regions, loans = Map.insert r name loans, ident} 
+    let regs = Set.filter ((== r) . fst) regions in
+    let derivedLoans = Set.foldr (\(_, r1) -> Map.insert r1 name) loans regs in
+    --error (show regions ++ "\n" ++ show regs ++ "\n" ++ show derivedLoans)
+    EnvT { 
+        gamma, 
+        used, 
+        regions, 
+        loans = Map.insert r name derivedLoans, 
+        ident
+    } 
+
+propateLoans :: RegEnv -> LoanEnv -> LoanEnv
+propateLoans regs loans = Map.foldrWithKey pass loans loans
+    where
+        pass regKey var loansAcc = Set.foldr 
+            (\(r1, r2) acc -> if regKey == r1 then Map.insert r2 var acc else acc) loansAcc regs
+
 
 removeLoan :: VarName -> Env -> Env 
 removeLoan name EnvT { gamma, used, regions, loans, ident } = 
@@ -363,25 +391,28 @@ check (env, Deref expr) = do
     (env', t) <- check (env, expr)
     case t of 
         Ptr innerT | not $ isLinear innerT -> Right (repairU env', innerT)
-        AliasT innerT reg | not (isLinear innerT) && isAcessValid reg env' -> Right (repairU env', innerT)
+        AliasT innerT reg | not (isLinear innerT) -> 
+            if isAcessValid reg env' then 
+                Right (repairU env', innerT) 
+            else 
+                Left (InvalidAliasAcess env)
         _ -> Left $ UnmatchedTypes ("Só pode-se desreferenciar ponteiros para valores não lineares. O atual é " ++ show t)
 
 -- get alias of ptr type
-check (env, Alias expr) = do
-    (env', t) <- check (env, expr)
-    let (env'', ident) = getLabel env' 
+check (env, Alias name) = do
+    t <- getVar name env
+    let (env', ident) = getLabel env
     case t of
-        Ptr t' -> Right (repairU env'', AliasT t' ident)
+        Ptr t' -> Right (addLoan ident name env', AliasT t' ident)
         _ -> Left $ UnmatchedTypes ("Só pode-se fazer alias de ponteiros. O atual é " ++ show t)
 
-check (env, AliasDeref expr) = do
-    (env', t) <- check (env, expr)
-    let (env'', ident) = getLabel env' 
+check (env, AliasDeref name) = do
+    t <- getVar name env
     case t of
-        Ptr t' -> case t' of 
-            Ptr _ -> Right (repairU env'', AliasT t' ident)
-            _ -> Left $ UnmatchedTypes ("Só pode-se fazer alias deref de ponteiros a ponteiros. O atual é " ++ show t)
-        _ -> Left $ UnmatchedTypes ("Só pode-se fazer alias de ponteiros. O atual é " ++ show t)
+        AliasT t' reg -> case t' of 
+            Ptr _ -> Right (addLoan reg name env, AliasT t' reg)
+            _ -> Left $ UnmatchedTypes ("Só pode-se fazer alias* de @*T'reg. O tipo interno atual é " ++ show t)
+        _ -> Left $ UnmatchedTypes ("O tipo da variável para alias* deve ser AliasT. O atual é " ++ show t)
 
 check (env, Comp expr1 expr2) = do
     (env', _) <- check (env, expr1)
@@ -396,12 +427,14 @@ check (env, Comp expr1 expr2) = do
 -- G |- { e } : T | G `intersect` G' 
 check (env, Scope expr) = do
     (env', t) <- check (env, expr)
-    if nonlinear ((Map.difference `on` gamma) env' env) then 
+    let locals = (Map.difference `on` gamma) env' env
+    if nonlinear locals then 
         Right (EnvT { 
             gamma = (Map.intersection `on` gamma) env env',
             used = Map.empty,
             regions = regions env,
-            loans = (Map.intersection `on` loans) env env',
+            -- TODO: para cada variável que saiu de escopo, remover a loan associada
+            loans = Map.filter (`Map.notMember` locals) (loans env'), 
             ident = ident env'
         }, t)
     else
@@ -411,6 +444,7 @@ check (env, New t expr) = do
     (env', t1) <- check (env, expr)
     match t1 Num (discardU env', Ptr t)
 
+-- TODO: remover a loan da lista de loans
 check (env, Delete expr1 expr2) = do
     (env', _) <- check (env, expr1)
     (env'', t2) <- check (discardU env', expr2)
@@ -520,6 +554,7 @@ check (env, CallFunc name args) = do
 check (env, Stop) = Right (env, unit)
 
 check (env, NullPtr tipo) = Right (env, Ptr tipo)
+check (env, NullAlias tipo) = Right (env, AliasT tipo 0)
 
 
 checkFn :: (Env, Function) -> Either TypeError (Env, Tipo)
@@ -552,16 +587,27 @@ infixr 8 .>
 
 ex1 :: Function
 ex1 = Main (
-    LetVar "y" (AliasT Num 0) (Alias (NullPtr Num)) .>
+    LetVar "y" (AliasT Num 1) (NullAlias Num) .>
     Scope (
         LetVar "x" (Ptr Num) (New Num (Value (Number 1))) .>
-        Assign (Var "y") (Alias (Var "x")) .>
+        Assign (Var "y") (Alias "x") .>
         Delete (Var "x") (Value (Number 1))
     ) .>
     Deref (Var "y")
     )
 
+ex3 :: Function
+ex3 = Main (
+    LetVar "y" (AliasT Num 1) (NullAlias Num) .>
+    LetVar "x" (Ptr Num) (New Num (Value (Number 1))) .>
+    Scope (
+        Assign (Var "y") (Alias "x")
+    ) .>
+    Deref (Var "y") .>
+    Delete (Var "x") (Value (Number 1))
+    )
+
 testMain :: IO ()
 testMain = do
-    print ex1
-    print $ checkProgram ex1
+    print ex3
+    print $ checkProgram ex3
