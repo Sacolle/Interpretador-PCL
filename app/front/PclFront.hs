@@ -5,7 +5,6 @@ module PclFront where
 
 import GHC.Utils.Misc (dropTail)
 import Data.Function
-import Data.Either (isLeft, isRight)
 
 import qualified Data.Map as Map
 import qualified Data.Set as Set
@@ -97,7 +96,7 @@ data Exp = Var VarName
     | Swap Exp Exp
     | SwapDeref Exp Exp
     | If Exp Exp Exp
-    | While Exp Exp
+    -- | While Exp Exp
     | CallFunc FuncName [Exp]
     | Stop
     | NullPtr Tipo
@@ -125,7 +124,7 @@ instance Show Exp where
         Swap expr1 expr2 -> show expr1 ++ " :=: " ++ show expr2 
         SwapDeref expr1 expr2 -> show expr1 ++ " :=:* " ++ show expr2 
         If expr1 expr2 expr3 -> "if(" ++ show expr1 ++ ")\n(" ++ show expr2 ++ ")\nelse (" ++ show expr3 ++ ")"
-        While expr1 expr2 -> "while( " ++ show expr1 ++ " )\n" ++ show expr2
+        -- While expr1 expr2 -> "while( " ++ show expr1 ++ " )\n" ++ show expr2
         CallFunc name exprs -> name ++ "(" ++ concatComma exprs ++ ")" 
         Stop -> "stop"
         NullPtr t -> "nullptr<" ++ show t ++ ">"
@@ -293,7 +292,14 @@ isOnlyOutLivedBy r1 r2 EnvT { regions } =
     -- se algum Rs não é outlived for r2, (r2 : Rs) 
     -- então r1 não é apenas outlived por r2, ou mlr, não é ultimamente outlived by r2
     -- all regions rl in [(rl, rr)] need to be outlived by r2
-    all (\(rl, _) -> Set.member (r2, rl) regions) regionsThatOutliveR1
+    -- error $ show regionsThatOutliveR1
+    -- all (\(rl, _) -> Set.member (r2, rl) regions) regionsThatOutliveR1
+    all (\(rl, _) -> 
+        (
+            Set.member (r2, rl) regions && 
+            Set.notMember (rl, r2) regions
+        ) || r2 == rl
+    ) regionsThatOutliveR1
 
 
 -- quando adiciona um emprestimo, propaga para todas as regiões na relação r : r'
@@ -591,6 +597,7 @@ check (env, If expr1 expr2 expr3) = do
     else
         Left $ UnmatchedTypes ("Tipo da expressão de comparação deve ser inteiro. Atual é " ++ show t)
 
+{- NOTE: não foi fazer while agr, muito brain pra fazer funcionar, recursion it is bb
 -- retornar unit
 check (env, While expr1 expr2) = do 
     (env', t) <- check (env, expr1) 
@@ -601,6 +608,7 @@ check (env, While expr1 expr2) = do
         (<$) unit <$> check (env', Scope expr2)
     else
         Left $ UnmatchedTypes ("Tipo da expressão de comparação deve ser inteiro. Atual é " ++ show t)
+-}
 
 check (env, CallFunc name args) = do
     tipo <- getVar name env
@@ -633,7 +641,6 @@ checkFn (env, DeclFunc name args retT body nextFn) = do
     (env', t) <- check (foldr (uncurry addVar) (addVar name (Fn (map snd args) retT) env) args, body)
     -- Change the below equality, it has to check for something more on this on the case of Alias
 
-    error $ show t ++ "\n" ++ show env'
     case retT of
         AliasT innerRetT retReg -> 
             case t of 
@@ -643,6 +650,7 @@ checkFn (env, DeclFunc name args retT body nextFn) = do
                     -- na forma retR : r, ou se eles são iguais
                     -- TODO: tá errada 
                     if isOnlyOutLivedBy reg retReg env' then
+                        --error $ show env' ++ "("++ show retReg ++", " ++ show reg ++")"
                         checkFn (addVar name (Fn (map snd args) retT) env, nextFn)
                     else
                         Left $ InvalidAliasDeclaration env'
@@ -786,7 +794,6 @@ let z: @T'a;
 z := f(&x, &y)
 *z
 -}
--- TODO:
 ex8 :: Function
 ex8 = DeclFunc "comp" [("a", AliasT Num 10), ("b", AliasT Num 11)] (AliasT Num 11) 
     (If (Value (Number 0)) (Var "a") (Var "b")) 
@@ -808,22 +815,18 @@ f() -> @T'b { <- aqui acho q análise deve apitar na avaliação da função
 let z := f()
 *z
 -}
--- TODO:
 ex9 :: Function
-ex9 = DeclFunc "comp" [("a", AliasT Num 10), ("b", AliasT Num 10)] (AliasT Num 10) (Var "a") $
+ex9 = DeclFunc "f" [] (AliasT Num 10) 
+    (LetVar "x" Num (Value (Number 1)) .> Ref "x") 
+    $
     Main (
-        LetVar "x" (Ptr Num) (New Num (Value (Number 1))) .>
-        LetVar "z" (Ptr Num) (New Num (Value (Number 1))) .>
-        LetVar "res" (AliasT Num 55) (CallFunc "comp" [Alias "x", Alias "z"]) .>
-        Deref (Var "res") .>
-        Delete (Var "x") (Value (Number 1)) .>
-        Delete (Var "z") (Value (Number 1))
+        LetVar "res" (AliasT Num 55) (CallFunc "f" []) .>
+        Deref (Var "res")
     )
 
 
 tests :: [(String, Function, Either TypeError Tipo)]
 tests = [
-    ("8. Return region of function is insuficient", ex8, Left $ InvalidAliasDeclaration emptyEnv),
     ("1. Deleted Ptr", ex1, Left $ InvalidAliasAcess emptyEnv), 
     ("2. If borrow", ex2, Right Num), 
     ("3. alias in scope", ex3, Right Num), 
@@ -831,7 +834,8 @@ tests = [
     ("5. Base alias in function", ex5, Right Num),
     ("6. Return of function when an associated loan is deleted", ex6, Left $ InvalidAliasAcess emptyEnv),
     ("7. Deref return when scopes dont match", ex7, Left $ InvalidAliasAcess emptyEnv),
-    ("7.1. Deref return with diferent scopes", ex7_1, Right Num)
+    ("8. Return region of function is insuficient", ex8, Left $ InvalidAliasDeclaration emptyEnv),
+    ("9. Return of local adress variable", ex9, Left $ InvalidAliasDeclaration emptyEnv)
     ]
 
 testMain :: IO ()
