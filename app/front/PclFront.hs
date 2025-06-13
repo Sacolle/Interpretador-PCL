@@ -5,10 +5,11 @@ module PclFront where
 
 import GHC.Utils.Misc (dropTail)
 import Data.Function
+import Data.Either (isLeft, isRight)
 
 import qualified Data.Map as Map
 import qualified Data.Set as Set
-import qualified Data.Maybe as Maybe
+import Control.Monad (forM_)
 
 concatComma :: Show a => [a] -> String
 concatComma = dropTail 2 . concatMap ((++", ") . show)
@@ -69,6 +70,7 @@ instance Show Tipo where
         Fn args ret -> "(" ++ concatComma args ++ ") -> " ++ show ret
 
 instance Eq Tipo where 
+    (==) :: Tipo -> Tipo -> Bool
     (==) t1 t2 = case t1 of
         Num -> case t2 of Num -> True; _ -> False
         Ptr t' -> case t2 of Ptr t'' -> t' == t''; _ -> False
@@ -159,20 +161,29 @@ match t1 t2 res =
 
 data TypeError = UseOfMovedValue 
     | UnmatchedTypes String
-    | Unimplemented 
-    | MissingType 
     | BareLoc 
     | VarNotFound 
     | EndOfScopeWithLinVar 
     | InvalidAliasAcess Env
+    | InvalidAliasDeclaration Env
     deriving (Show)
+
+instance Eq TypeError where
+    (==) err1 err2 = case err1 of
+        UseOfMovedValue -> case err2 of UseOfMovedValue -> True; _ -> False
+        UnmatchedTypes _ -> case err2 of UnmatchedTypes _ -> True; _ -> False
+        BareLoc -> case err2 of BareLoc -> True; _ -> False
+        VarNotFound -> case err2 of VarNotFound -> True; _ -> False
+        EndOfScopeWithLinVar -> case err2 of EndOfScopeWithLinVar -> True; _ -> False
+        InvalidAliasAcess _ -> case err2 of InvalidAliasAcess _ -> True; _ -> False
+        InvalidAliasDeclaration _ -> case err2 of InvalidAliasDeclaration _ -> True; _ -> False
 
 type Reg = Int
 
 type TypeEnv = Map.Map VarName Tipo
 -- fst outlives snd
 type RegEnv = Set.Set (Reg, Reg)
-type LoanEnv = Map.Map Reg VarName
+type LoanEnv = Set.Set (Reg, VarName)
 
 data Env = EnvT {
     gamma :: TypeEnv,
@@ -181,6 +192,15 @@ data Env = EnvT {
     loans :: LoanEnv,
     ident :: Reg
 } deriving (Show)
+
+emptyEnv :: Env
+emptyEnv = EnvT {
+    gamma = Map.empty,
+    used = Map.empty,
+    regions = Set.empty,
+    loans = Set.empty,
+    ident = 10000
+}
 
 
 -- repairU: junta o gamma e o used
@@ -255,38 +275,69 @@ transitive regEnv =
             ) 
             regEnv regEnv
 
+combineAlias :: Tipo -> Tipo -> [(Reg, Reg)]
+combineAlias t1 t2 = case (t1, t2) of
+    (AliasT innerT1 r1, AliasT innerT2 r2) -> (r1, r2) : (r2, r1) : combineAlias innerT1 innerT2
+    _ -> []
+
+-- if r2 : r1, ou se r1 é outlived by r2
+-- that means, find in regions the pair (r2, r1)
+isOnlyOutLivedBy :: Reg -> Reg -> Env -> Bool
+isOnlyOutLivedBy r1 r2 EnvT { regions } = 
+    -- pega todos os Rs em que Rs : r1,
+    -- junto da identidade (r1, r1)
+    let regionsThatOutliveR1 = Set.filter ((== r1) . snd) regions in
+    if Set.size regionsThatOutliveR1 == 0 then -- se ninguem outlives r1, então r1 tem que ser igual a r2
+        r1 == r2
+    else
+    -- se algum Rs não é outlived for r2, (r2 : Rs) 
+    -- então r1 não é apenas outlived por r2, ou mlr, não é ultimamente outlived by r2
+    -- all regions rl in [(rl, rr)] need to be outlived by r2
+    all (\(rl, _) -> Set.member (r2, rl) regions) regionsThatOutliveR1
+
+
 -- quando adiciona um emprestimo, propaga para todas as regiões na relação r : r'
 -- então quando adiciona (0', x) com (0' : 1'), também adiciona (1', x)
 -- TODO: verificar o caso ex3 funciona nessa relação
 addLoan :: Reg -> VarName -> Env -> Env 
 addLoan r name EnvT { gamma, used, regions, loans, ident } = 
     let regs = Set.filter ((== r) . fst) regions in
-    let derivedLoans = Set.foldr (\(_, r1) -> Map.insert r1 name) loans regs in
+    let derivedLoans = Set.foldr (\(_, r1) -> Set.insert (r1, name)) loans regs in
     --error (show regions ++ "\n" ++ show regs ++ "\n" ++ show derivedLoans)
     EnvT { 
         gamma, 
         used, 
         regions, 
-        loans = Map.insert r name derivedLoans, 
+        loans = Set.insert (r, name) derivedLoans, 
         ident
     } 
 
 propateLoans :: RegEnv -> LoanEnv -> LoanEnv
-propateLoans regs loans = Map.foldrWithKey pass loans loans
+propateLoans regs loans = Set.foldr pass loans loans
     where
-        pass regKey var loansAcc = Set.foldr 
-            (\(r1, r2) acc -> if regKey == r1 then Map.insert r2 var acc else acc) loansAcc regs
+        pass (reg, var) loansAcc = Set.foldr 
+            (\(r1, r2) acc -> if reg == r1 then Set.insert (r2, var) acc else acc) loansAcc regs
 
 
 removeLoan :: VarName -> Env -> Env 
 removeLoan name EnvT { gamma, used, regions, loans, ident } = 
-    EnvT { gamma, used, regions, loans = Map.filter (/= name) loans, ident} 
+    -- get all loans for name
+    let relatedLoans = Set.filter (\(_, n) -> n == name) loans in
+    EnvT { 
+        gamma, 
+        used, 
+        regions, 
+        -- aqui pega todos os emprétimos associados a name
+        -- se uma região da lista de loans é associada a name, remove ela
+        loans = Set.filter (\(r, _) -> all (\(r', _) -> r /= r') relatedLoans) loans, 
+        ident
+    } 
 -- TODO: validar com casos de uso a implementação
 -- um acesso é válido se o empréstimo existe para a região
 -- isso pode ser invalidado caso a região que fez o empréstimo tenha saido de escopo
 -- ou se o elemento emprestado tenha sido manualmente removida (delete)
 isAcessValid :: Reg -> Env -> Bool
-isAcessValid r EnvT { loans } = Maybe.isJust $ Map.lookup r loans 
+isAcessValid r EnvT { loans } = Set.size (Set.filter ((== r) . fst) loans) > 0
 
 
 check :: (Env, Exp) -> Either TypeError (Env, Tipo)
@@ -311,7 +362,7 @@ check (env, Ref name) = do
         Fn _ _ -> Left $ UnmatchedTypes "Nome de variável não pode ser usada como variável"
         _ -> do 
             let (env', reg) = getLabel env
-            Right (env', AliasT t reg)
+            Right (addLoan reg name env', AliasT t reg)
          
 
 -- rule for value
@@ -388,6 +439,7 @@ check (env, Not expr) = do
 -- deref *T -> T if T is nonlinear
 -- TODO: validate the deref on the alias
 check (env, Deref expr) = do 
+    --error $ show env
     (env', t) <- check (env, expr)
     case t of 
         Ptr innerT | not $ isLinear innerT -> Right (repairU env', innerT)
@@ -433,8 +485,7 @@ check (env, Scope expr) = do
             gamma = (Map.intersection `on` gamma) env env',
             used = Map.empty,
             regions = regions env,
-            -- TODO: para cada variável que saiu de escopo, remover a loan associada
-            loans = Map.filter (`Map.notMember` locals) (loans env'), 
+            loans = loans $ foldr (removeLoan . fst) env' (Map.toList locals), 
             ident = ident env'
         }, t)
     else
@@ -444,11 +495,27 @@ check (env, New t expr) = do
     (env', t1) <- check (env, expr)
     match t1 Num (discardU env', Ptr t)
 
--- TODO: remover a loan da lista de loans
+-- caso do delete com variável, 
+-- remove a loan associada da lista de loans
+check (env, Delete (Var name) expr2) = do
+    (env', t) <- useVar name env
+    case t of 
+        Ptr _ -> do 
+            (env'', t2) <- check (removeLoan name env', expr2)
+            match t2 Num (discardU env'', unit)
+        rest -> Left $ UnmatchedTypes ("Primeiro argumento de Delete deve ser um pointeiro. Atual é " ++ show rest)
+
+-- se o argumento imediato do delete não é uma variável,
+-- então o o ptr é resultado de alguma computação, e não foi feito 
+-- nenhum alias, que precisa de variável, assim, não precisa alterar a lista de loans
+-- pois esse caso só acontece em exemplos como delete(new<int>(1), 1) ou delete(f(x), 1)
 check (env, Delete expr1 expr2) = do
-    (env', _) <- check (env, expr1)
-    (env'', t2) <- check (discardU env', expr2)
-    match t2 Num (discardU env'', unit)
+    (env', t) <- check (env, expr1)
+    case t of 
+        Ptr _ -> do 
+            (env'', t2) <- check (discardU env', expr2)
+            match t2 Num (discardU env'', unit)
+        rest -> Left $ UnmatchedTypes ("Primeiro argumento de Delete deve ser um pointeiro. Atual é " ++ show rest)
 
 --NOTE: usar o tipo da expressão?
 check (env, LetVar name t expr) = do
@@ -461,7 +528,7 @@ check (env, LetVar name t expr) = do
                 _ -> Left $ UnmatchedTypes "Lado direito da declaração deve ser um Alias T"
         _ -> match t t' (addVar name t (discardU env'), unit)
 
--- TODO: discartar a relação que existia para a região do lado esquerdo (lr) (será que é necessário na real?)
+-- NOTE: discartar a relação que existia para a região do lado esquerdo (lr) (será que é necessário na real?)
 check (env, Assign expr1 expr2) = do
     (env', t) <- check (env, expr1)
     (env'', t') <- check (discardU env', expr2)
@@ -512,11 +579,13 @@ check (env, If expr1 expr2 expr3) = do
     if t == Num then do
         (env2, t2) <- check (env', Scope expr2) 
         (env3, t3) <- check (env', Scope expr3) 
+        let newRegs = combineAlias t2 t3
+        -- error $ show env2 ++ "\n" ++ show env3
         match t2 t3 (EnvT {
             gamma = (Map.intersection `on` gamma) env2 env3,
             used = Map.empty,
-            regions = regions env,
-            loans = (Map.intersection  `on` loans) env2 env3,
+            regions = regions $ foldr addRegRelation env newRegs,
+            loans = (Set.union `on` loans) env2 env3,
             ident = max (ident env2) (ident env3)
         }, t3)
     else
@@ -540,15 +609,15 @@ check (env, CallFunc name args) = do
         rest -> Left $ UnmatchedTypes ("O nome da função não está associado a uma função. Esta associado a " ++ show rest)
     where 
         pass :: (Exp, Tipo) -> Either TypeError Env -> Either TypeError Env
-        pass (e, tipo) (Right envAcc) = do
-            (envAcc', checkedTipo) <- check (envAcc, e)
-            case checkedTipo of
-                AliasT innerT lr ->
-                    case tipo of 
-                        AliasT innerT' rr | innerT == innerT' -> 
+        pass (e, ltipo) (Right envAcc) = do
+            (envAcc', rtipo) <- check (envAcc, e)
+            case rtipo of
+                AliasT innerT rr ->
+                    case ltipo of 
+                        AliasT innerT' lr | innerT == innerT' -> 
                             Right (addRegRelation (rr, lr) (discardU envAcc'))
                         _ -> Left $ UnmatchedTypes "Argumento da declaração deve ser um Alias T"
-                _ -> match checkedTipo tipo (discardU envAcc')
+                _ -> match rtipo ltipo (discardU envAcc')
         pass _ (Left err) = Left err
 
 check (env, Stop) = Right (env, unit)
@@ -560,24 +629,32 @@ check (env, NullAlias tipo) = Right (env, AliasT tipo 0)
 checkFn :: (Env, Function) -> Either TypeError (Env, Tipo)
 checkFn (env, DeclFunc name args retT body nextFn) = do
     -- adiciona o tipo da função na lista antes de validar, pois o corpo pode chamar a função recursivamente
-    (env', t) <- check (addVar name (Fn (map snd args) retT) env, body)
-    if t == retT then 
-        checkFn (env', nextFn) 
-    else
-        Left $ UnmatchedTypes ("Tipo de retorno não é igual ao tipo do corpo. Retorno é " ++ show retT ++", mas o corpo é " ++ show t)
+    -- e adiciona os argumentos
+    (env', t) <- check (foldr (uncurry addVar) (addVar name (Fn (map snd args) retT) env) args, body)
+    -- Change the below equality, it has to check for something more on this on the case of Alias
+
+    error $ show t ++ "\n" ++ show env'
+    case retT of
+        AliasT innerRetT retReg -> 
+            case t of 
+                AliasT innerT reg | innerRetT == innerT -> 
+                    -- NOTE: um alias de retorno com região r é válido 
+                    -- se apenas a região retR de retorno anotado outlives it, 
+                    -- na forma retR : r, ou se eles são iguais
+                    -- TODO: tá errada 
+                    if isOnlyOutLivedBy reg retReg env' then
+                        checkFn (addVar name (Fn (map snd args) retT) env, nextFn)
+                    else
+                        Left $ InvalidAliasDeclaration env'
+                _ -> Left $ UnmatchedTypes ("Tipo de retorno esperado é " ++ show retT ++ ". O atual é " ++ show t)
+        _ | t == retT -> checkFn (addVar name (Fn (map snd args) retT) env, nextFn)
+        _ -> Left $ UnmatchedTypes ("Tipo de retorno não é igual ao tipo do corpo. Retorno é " ++ show retT ++", mas o corpo é " ++ show t)
 
 checkFn (env, Main body) = check (env, Scope body)
 
 
-checkProgram :: Ast -> Either TypeError Tipo
-checkProgram ast = snd <$> checkFn (
-    EnvT { 
-        gamma = Map.empty, 
-        used = Map.empty, 
-        regions = Set.empty, 
-        loans = Map.empty, 
-        ident = 10000
-    }, ast)
+checkProgram :: Ast -> Either TypeError (Env, Tipo)
+checkProgram ast = checkFn (emptyEnv, ast)
 
 (.>) :: Exp -> Exp -> Exp
 (.>) = Comp
@@ -596,6 +673,17 @@ ex1 = Main (
     Deref (Var "y")
     )
 
+ex2 :: Function
+ex2 = Main (
+    LetVar "y" (AliasT Num 1) (NullAlias Num) .>
+    LetVar "x" (Ptr Num) (New Num (Value (Number 1))) .>
+    LetVar "z" (Ptr Num) (New Num (Value (Number 1))) .>
+    If (Value (Number 1)) (Assign (Var "y") (Alias "x")) (Assign (Var "y") (Alias "z")) .>
+    Deref (Var "y") .>
+    Delete (Var "x") (Value (Number 1)) .>
+    Delete (Var "z") (Value (Number 1))
+    )
+
 ex3 :: Function
 ex3 = Main (
     LetVar "y" (AliasT Num 1) (NullAlias Num) .>
@@ -607,7 +695,156 @@ ex3 = Main (
     Delete (Var "x") (Value (Number 1))
     )
 
+ex4 :: Function
+ex4 = Main (
+    LetVar "y" (AliasT Num 1) (NullAlias Num) .>
+    LetVar "x" (Ptr Num) (New Num (Value (Number 1))) .>
+    LetVar "z" (Ptr Num) (New Num (Value (Number 1))) .>
+    If (Value (Number 1)) (Assign (Var "y") (Alias "x")) (Assign (Var "y") (Alias "z")) .>
+    Deref (Var "y") .>
+    Delete (Var "x") (Value (Number 1)) .>
+    -- deref desse y é unsafe, talvez o if tomou a esquerda, então deve falhar
+    Deref (Var "y") .>
+    Delete (Var "z") (Value (Number 1))
+    )
+
+ex5 :: Function
+ex5 = DeclFunc "comp" [("a", AliasT Num 10), ("b", AliasT Num 10)] (AliasT Num 10) (Var "a") $
+    Main (
+        LetVar "x" (Ptr Num) (New Num (Value (Number 1))) .>
+        LetVar "z" (Ptr Num) (New Num (Value (Number 1))) .>
+        LetVar "res" (AliasT Num 55) (CallFunc "comp" [Alias "x", Alias "z"]) .>
+        Deref (Var "res") .>
+        Delete (Var "x") (Value (Number 1)) .>
+        Delete (Var "z") (Value (Number 1))
+    )
+-- quando deleta um dos elementos associados
+ex6 :: Function
+ex6 = DeclFunc "comp" [("a", AliasT Num 10), ("b", AliasT Num 10)] (AliasT Num 10) (Var "a") $
+    Main (
+        LetVar "x" (Ptr Num) (New Num (Value (Number 1))) .>
+        LetVar "z" (Ptr Num) (New Num (Value (Number 1))) .>
+        LetVar "res" (AliasT Num 55) (CallFunc "comp" [Alias "x", Alias "z"]) .>
+        Deref (Var "res") .>
+        Delete (Var "x") (Value (Number 1)) .>
+        Deref (Var "res") .> -- gera erro aqui
+        Delete (Var "z") (Value (Number 1))
+    )
+
+-- quando o escopo dos elementos não bate, ig
+{-
+f(x: @T'b, y: @T'b) -> @T'b
+...
+let x: T;
+let z: @T'a;
+    {
+        let y: T;
+        z := f(&x, &y)
+    }
+*z <- erro, um,
+-}
+ex7 :: Function
+ex7 = DeclFunc "comp" [("a", AliasT Num 10), ("b", AliasT Num 10)] (AliasT Num 10) 
+    (If (Value (Number 0)) (Var "a") (Var "b")) 
+    $
+    Main (
+        LetVar "x" Num (Value (Number 1)) .>
+        --LetVar "x" (Ptr Num) (New Num (Value (Number 1))) .>
+        LetVar "res" (AliasT Num 55) (NullAlias Num) .>
+        Scope (
+            LetVar "z" Num (Value (Number 1)) .>
+            --LetVar "z" (Ptr Num) (New Num (Value (Number 1))) .>
+            Assign (Var "res") (CallFunc "comp" [Ref "x", Ref "z"]) 
+            -- Delete (Var "z") (Value $ Number 1)
+        ) .>
+        Deref (Var "res")
+    )
+-- essa versão deve funcionar
+ex7_1 :: Function
+ex7_1 = DeclFunc "comp" [("a", AliasT Num 10), ("b", AliasT Num 10)] (AliasT Num 10) 
+    (If (Value (Number 0)) (Var "a") (Var "b")) 
+    $
+    Main (
+        LetVar "x" Num (Value (Number 1)) .>
+        LetVar "res" (AliasT Num 55) (NullAlias Num) .>
+        Scope (
+            LetVar "z" Num (Value (Number 1)) .>
+            Assign (Var "res") (CallFunc "comp" [Ref "x", Ref "z"]) .>
+            Deref (Var "res")
+        )
+    )
+
+-- quando os tempos de vida associados da função não funcionam, ig
+{-
+f(x: @T'a, y: @T'b) -> @T'b { <- aqui acho q análise deve apitar na avaliação da função
+    if (...) { x } else { y }
+}
+...
+let x: T;
+let y: T;
+let z: @T'a;
+z := f(&x, &y)
+*z
+-}
+-- TODO:
+ex8 :: Function
+ex8 = DeclFunc "comp" [("a", AliasT Num 10), ("b", AliasT Num 11)] (AliasT Num 11) 
+    (If (Value (Number 0)) (Var "a") (Var "b")) 
+    $
+    Main (
+        LetVar "x" Num (Value (Number 1)) .>
+        LetVar "z" Num (Value (Number 1)) .>
+        LetVar "res" (AliasT Num 55) (CallFunc "comp" [Ref "x", Ref "z"]) .>
+        Deref (Var "res") 
+    )
+
+-- retorno de alias unbounded da função, i.g
+{-
+f() -> @T'b { <- aqui acho q análise deve apitar na avaliação da função
+    let x;
+    &x
+}
+...
+let z := f()
+*z
+-}
+-- TODO:
+ex9 :: Function
+ex9 = DeclFunc "comp" [("a", AliasT Num 10), ("b", AliasT Num 10)] (AliasT Num 10) (Var "a") $
+    Main (
+        LetVar "x" (Ptr Num) (New Num (Value (Number 1))) .>
+        LetVar "z" (Ptr Num) (New Num (Value (Number 1))) .>
+        LetVar "res" (AliasT Num 55) (CallFunc "comp" [Alias "x", Alias "z"]) .>
+        Deref (Var "res") .>
+        Delete (Var "x") (Value (Number 1)) .>
+        Delete (Var "z") (Value (Number 1))
+    )
+
+
+tests :: [(String, Function, Either TypeError Tipo)]
+tests = [
+    ("8. Return region of function is insuficient", ex8, Left $ InvalidAliasDeclaration emptyEnv),
+    ("1. Deleted Ptr", ex1, Left $ InvalidAliasAcess emptyEnv), 
+    ("2. If borrow", ex2, Right Num), 
+    ("3. alias in scope", ex3, Right Num), 
+    ("4. If borrow when one is deleted", ex4, Left $ InvalidAliasAcess emptyEnv),
+    ("5. Base alias in function", ex5, Right Num),
+    ("6. Return of function when an associated loan is deleted", ex6, Left $ InvalidAliasAcess emptyEnv),
+    ("7. Deref return when scopes dont match", ex7, Left $ InvalidAliasAcess emptyEnv),
+    ("7.1. Deref return with diferent scopes", ex7_1, Right Num)
+    ]
+
 testMain :: IO ()
-testMain = do
-    print ex3
-    print $ checkProgram ex3
+testMain = forM_ tests testCase
+    where
+        testCase (name, prog, expect) = do
+            putStr name
+            case (checkProgram prog, expect) of 
+                (Left err, Left expectedErr) | err == expectedErr -> putStr ": OK\n"
+                (Left err, Left expectedErr) -> printFailure err expectedErr
+                (Right (_, tipo), Left expectedErr) -> printFailure tipo expectedErr
+                (Right (_, tipo), Right expectedTipo) | tipo == expectedTipo -> putStr ": OK\n"
+                (Right (_, tipo), Right expectedTipo) -> printFailure tipo expectedTipo
+                (Left err, Right expectedTipo) -> printFailure err expectedTipo
+        printFailure :: (Show a, Show b) => a -> b -> IO ()
+        printFailure e1 e2 = print $ "Falha, esperava\n1: " ++ show e2 ++ "\nEncontrou\n2: " ++ show e1
