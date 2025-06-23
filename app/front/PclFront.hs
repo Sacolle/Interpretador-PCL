@@ -648,7 +648,6 @@ checkFn (env, DeclFunc name args retT body nextFn) = do
                     -- NOTE: um alias de retorno com região r é válido 
                     -- se apenas a região retR de retorno anotado outlives it, 
                     -- na forma retR : r, ou se eles são iguais
-                    -- TODO: tá errada 
                     if isOnlyOutLivedBy reg retReg env' then
                         --error $ show env' ++ "("++ show retReg ++", " ++ show reg ++")"
                         checkFn (addVar name (Fn (map snd args) retT) env, nextFn)
@@ -675,7 +674,10 @@ ex1 = Main (
     LetVar "y" (AliasT Num 1) (NullAlias Num) .>
     Scope (
         LetVar "x" (Ptr Num) (New Num (Value (Number 1))) .>
+        -- @int'1 alias'2 *T    
+        -- Regions (2 : 1), Loans (2, x), (1, x)
         Assign (Var "y") (Alias "x") .>
+        --
         Delete (Var "x") (Value (Number 1))
     ) .>
     Deref (Var "y")
@@ -686,7 +688,13 @@ ex2 = Main (
     LetVar "y" (AliasT Num 1) (NullAlias Num) .>
     LetVar "x" (Ptr Num) (New Num (Value (Number 1))) .>
     LetVar "z" (Ptr Num) (New Num (Value (Number 1))) .>
-    If (Value (Number 1)) (Assign (Var "y") (Alias "x")) (Assign (Var "y") (Alias "z")) .>
+    If (Value (Number 1)) 
+        -- (2x : 1), (x, 2x), (x, 1)
+        (Assign (Var "y") (Alias "x")) 
+        -- (2z : 1), (z, 2z), (z, 1)
+        (Assign (Var "y") (Alias "z")) 
+    .>
+    -- (x, 1), (z, 1)
     Deref (Var "y") .>
     Delete (Var "x") (Value (Number 1)) .>
     Delete (Var "z") (Value (Number 1))
