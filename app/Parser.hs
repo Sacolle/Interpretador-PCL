@@ -10,7 +10,10 @@ import Pcl (FuncName, VarName, Number, Exp(..),
     ErrorKinds(..), Binop(..), Value (Number, Loc),
     nullLoc, Function(..), Global(..))
 
-newtype Parser a = Parser {runParser :: [Token] -> [(a, [Token])]}
+-- NOTE: tentar trocar esse parser para
+-- Parser {runParser :: [Token] -> [Either ParserError (a, [Token])]}
+-- Desse jeito dá para encontrar onde que fica o erro de parse
+newtype Parser a = Parser {runParser :: [Token] -> [(a, [Token])]} 
 
 instance Functor Parser where
   fmap f (Parser p) = Parser (fmap (first f) . p)

@@ -832,6 +832,42 @@ ex9 = DeclFunc "f" [] (AliasT Num 10)
         Deref (Var "res")
     )
 
+ex10 :: Function
+ex10 = Main (
+    LetVar "y" (AliasT Num 1) (NullAlias Num) .>
+    LetVar "x" (Ptr Num) (New Num (Value (Number 1))) .>
+    LetVar "z" (AliasT Num 2) (Alias "x") .>
+    Scope (
+        Assign (Var "y") (Var "z")
+    ) .>
+    Deref (Var "y") .>
+    Delete (Var "x") (Value (Number 1))
+    )
+
+ex11 :: Function
+ex11 = Main (
+    LetVar "y" (AliasT Num 1) (NullAlias Num) .>
+    LetVar "x" (Ptr Num) (New Num (Value (Number 1))) .>
+    Scope (
+        LetVar "z" (AliasT Num 2) (Alias "x") .>
+        Assign (Var "y") (Var "z")
+    ) .>
+    Deref (Var "y") .>
+    Delete (Var "x") (Value (Number 1))
+    )
+
+ex12 :: Function
+ex12 = Main (
+    LetVar "y" (AliasT Num 1) (NullAlias Num) .>
+    Scope (
+        LetVar "x" (Ptr Num) (New Num (Value (Number 1))) .>
+        LetVar "z" (AliasT Num 2) (Alias "x") .>
+        Assign (Var "y") (Var "z") .> 
+        Delete (Var "x") (Value (Number 1))
+    ) .>
+    Deref (Var "y")
+    )
+
 
 tests :: [(String, Function, Either TypeError Tipo)]
 tests = [
@@ -843,7 +879,10 @@ tests = [
     ("6. Return of function when an associated loan is deleted", ex6, Left $ InvalidAliasAcess emptyEnv),
     ("7. Deref return when scopes dont match", ex7, Left $ InvalidAliasAcess emptyEnv),
     ("8. Return region of function is insuficient", ex8, Left $ InvalidAliasDeclaration emptyEnv),
-    ("9. Return of local adress variable", ex9, Left $ InvalidAliasDeclaration emptyEnv)
+    ("9. Return of local adress variable", ex9, Left $ InvalidAliasDeclaration emptyEnv),
+    ("10. Assign with ref still in scope", ex10, Right Num),
+    ("11. Assign with ref still in scope, inside scope", ex11, Right Num),
+    ("12. Assign with ref with ptr inside scope", ex12, Left $ InvalidAliasAcess emptyEnv)
     ]
 
 testMain :: IO ()
