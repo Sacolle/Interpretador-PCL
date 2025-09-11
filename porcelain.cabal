@@ -73,7 +73,9 @@ executable porcelain
         Mem
         PclFront
         Compilation
-
+        FLexer
+        FParser 
+        TypeCheck
 
     -- LANGUAGE extensions used by modules in this package.
     -- other-extensions:

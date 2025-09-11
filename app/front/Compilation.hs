@@ -35,18 +35,16 @@ compileExp (Front.Binop op e1 e2) = do
     be2 <- compileExp e2
     return $ Back.Binop (compileBinop op) be1 be2
 
-compileExp (Front.Inc e1 e2) = do
-    be1 <- compileExp e1
-    be2 <- compileExp e2
+compileExp (Front.Inc name e) = do
+    be <- compileExp e
     return $ Back.Comp 
-        (Back.Assign be1 (Back.Binop Back.Add be1 be2))
+        (Back.Assign (Back.Var name) (Back.Binop Back.Add (Back.Var name) be))
         (Back.Value (Back.Number 0))
 
-compileExp (Front.Dec e1 e2) = do
-    be1 <- compileExp e1
-    be2 <- compileExp e2
+compileExp (Front.Dec name e) = do
+    be <- compileExp e
     return $ Back.Comp 
-        (Back.Assign be1 (Back.Binop Back.Sub be1 be2))
+        (Back.Assign (Back.Var name) (Back.Binop Back.Sub (Back.Var name) be))
         (Back.Value (Back.Number 0))
 
 compileExp (Front.Not e) = do 
@@ -72,14 +70,20 @@ compileExp (Front.Scope e) = do
     be <- compileExp e
     return $ Back.Scope be
 
-compileExp (Front.New _ e) = do
+compileExp (Front.New name _ e) = do
     be <- compileExp e
-    return $ Back.Malloc be
+    return $ Back.Comp 
+        (Back.Let name 1) 
+        (Back.Comp
+            (Back.Assign (Back.Var name) (Back.Malloc be))
+            (Back.Value (Back.Number 0))
+        )
 
-compileExp (Front.Delete e1 e2) = do
-    be1 <- compileExp e1
-    be2 <- compileExp e2
-    return $ Back.Free be1 be2
+compileExp (Front.Delete name e) = do
+    be <- compileExp e
+    return $ Back.If (Back.Binop Back.Equal (Back.Var name) (Back.Value $ Back.Loc Back.nullLoc)) 
+        (Back.Value (Back.Number 0)) 
+        (Back.Free (Back.Var name) be)
 
 compileExp (Front.LetVar name _ e) = do
     eb <- compileExp e
@@ -95,35 +99,31 @@ compileExp (Front.Assign e1 e2) = do
     be2 <- compileExp e2
     return $ Back.Assign be1 be2
 
-compileExp (Front.Swap e1 e2) = do 
+compileExp (Front.Swap name1 name2) = do 
     n <- get
     let swap = "__swap__" ++ show n
     put (n + 1)
-    eb1 <- compileExp e1
-    eb2 <- compileExp e2
     return $ Back.Comp 
         (Back.Let swap 1)
         (Back.Comp
-            (Back.Assign (Back.Var swap) eb1) 
+            (Back.Assign (Back.Var swap) (Back.Var name1)) 
             (Back.Comp 
-                (Back.Assign eb1 eb2)
-                (Back.Assign eb2 (Back.Var swap))
+                (Back.Assign (Back.Var name1) (Back.Var name2))
+                (Back.Assign (Back.Var name2) (Back.Var swap))
             )
         )
 
-compileExp (Front.SwapDeref e1 e2) = do
+compileExp (Front.SwapDeref name1 name2) = do
     n <- get
     let swap = "__swap__" ++ show n
     put (n + 1)
-    eb1 <- compileExp e1
-    eb2 <- compileExp e2
     return $ Back.Comp 
         (Back.Let swap 1)
         (Back.Comp
-            (Back.Assign (Back.Var swap) eb1) 
+            (Back.Assign (Back.Var swap) (Back.Var name1)) 
             (Back.Comp 
-                (Back.Assign eb1 (Back.Deref eb2))
-                (Back.Assign (Back.Deref eb2) (Back.Var swap))
+                (Back.Assign (Back.Var name1) (Back.Deref (Back.Var name2)))
+                (Back.Assign (Back.Deref (Back.Var name2)) (Back.Var swap))
             )
         )
 
@@ -133,9 +133,14 @@ compileExp (Front.If e1 e2 e3) = do
     be3 <- compileExp e3
     return $ Back.If be1 (Back.Scope be2) (Back.Scope be3)
 
-compileExp (Front.CallFunc fname args) = do 
+compileExp (Front.CallFunc vname _ fname args) = do 
     bargs <- traverse compileExp args
-    return $ Back.CallFunc fname bargs
+    return $ Back.Comp 
+        (Back.Let vname 1) 
+        (Back.Comp
+            (Back.Assign (Back.Var vname) (Back.CallFunc fname bargs))
+            (Back.Value (Back.Number 0))
+        )
 
 compileExp Front.Stop = return $ Back.Panic Back.UserError
 

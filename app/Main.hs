@@ -3,10 +3,10 @@ import System.Environment (getArgs)
 import Parser (parser)
 import Interpreter (stepRun, fullRun)
 
-import PclFront (testMain)
+import TypeCheck (testMain)
 
 main :: IO ()
-main = PclFront.testMain
+main = testMain
 
 {- 
 run:: String -> String -> IO()
