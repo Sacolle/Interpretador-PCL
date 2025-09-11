@@ -6,6 +6,14 @@ import Control.Monad.State
 
 
 
+defaultTypeValue :: Front.Tipo -> Back.Exp
+defaultTypeValue t = Back.Value $ case t of
+    Front.Num -> Back.Number 0
+    Front.Ptr _ -> Back.Loc Back.nullLoc
+    Front.AliasT _ _  -> Back.Loc Back.nullLoc
+    err -> error $ "Erro no parse de tipos, variáveis do malloc não devem ter tipo " ++ show err
+
+
 -- data Function = DeclFunc FuncName [(name, Tipo)] Tipo Exp Function | Main Exp
 compile :: Front.Ast -> Back.Ast
 compile inp = evalState (compileGlobals inp) 0 
@@ -70,15 +78,28 @@ compileExp (Front.Scope e) = do
     be <- compileExp e
     return $ Back.Scope be
 
-compileExp (Front.New name _ e) = do
+compileExp (Front.New name t e) = do
+    n <- get
+    let tmp = "__tmp__" ++ show n
+    put (n + 1)
     be <- compileExp e
-    return $ Back.Comp 
-        (Back.Let name 1) 
-        (Back.Comp
-            (Back.Assign (Back.Var name) (Back.Malloc be))
-            (Back.Value (Back.Number 0))
-        )
-
+    return $ foldr Back.Comp (Back.Value (Back.Number 1)) [
+        Back.Let tmp 1,
+        Back.Assign (Back.Var tmp) be,
+        Back.Let name 1,
+        Back.Assign (Back.Var name) (Back.Malloc (Back.Var tmp)),
+        Back.Assign (Back.Var tmp) (Back.Binop Back.Add (Back.Var tmp) (Back.Value (Back.Number 1))),
+        Back.While 
+            (Back.Comp 
+                (Back.Assign (Back.Var tmp) (Back.Binop Back.Sub (Back.Var tmp) (Back.Value (Back.Number 1)))) 
+                (Back.Binop Back.Less (Back.Value (Back.Number 0)) (Back.Var tmp))
+            ) 
+            (Back.Assign 
+                (Back.Binop Back.Add (Back.Var name) (Back.Binop Back.Sub (Back.Var tmp) (Back.Value (Back.Number 1)))) 
+                (defaultTypeValue t)
+            )
+        ]
+        
 compileExp (Front.Delete name e) = do
     be <- compileExp e
     return $ Back.If (Back.Binop Back.Equal (Back.Var name) (Back.Value $ Back.Loc Back.nullLoc)) 
