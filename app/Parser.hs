@@ -1,6 +1,6 @@
 {-# LANGUAGE LambdaCase #-}
 
-module Parser(parser, ParseError) where
+module Parser(parser, ParseError, Parser(..), sepBy1, opsL, opsR) where
 
 import Control.Applicative (Alternative (..), liftA2)
 import Data.List (foldl')

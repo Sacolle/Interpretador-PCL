@@ -7,7 +7,7 @@
 -- eu removi os operadores especiais e adaptei o lexer a PCL
 
 
-module Lexer (Token (..), LexerError (..), lexer) where
+module Lexer (Token (..), LexerError (..), lexer, unexpected, Lexer(..), satisfies, char, string, oneOf) where
 
 import Control.Applicative (Alternative (..), liftA2)
 import Data.Char (isAlphaNum, isDigit, isSpace)
