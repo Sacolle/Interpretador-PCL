@@ -2,15 +2,34 @@
 
 module FParser where
 
-import Parser
-import FLexer (Token(..))
-import PclFront
-
-
 import Control.Applicative (Alternative (..), liftA2)
+import Data.List (foldl')
+import FLexer (Token (..))
+import Data.Bifunctor (first)
+import PclFront (FuncName, VarName, Number, Exp(..), Binop(..), Value (Number), Function(..), Tipo(..))
 
+-- NOTE: tentar trocar esse parser para
+-- Parser {runParser :: [Token] -> [Either ParserError (a, [Token])]}
+-- Desse jeito dá para encontrar onde que fica o erro de parse
+newtype Parser a = Parser {runParser :: [Token] -> [(a, [Token])]} 
 
-satisifies :: (FLexer.Token -> Bool) -> Parser FLexer.Token
+instance Functor Parser where
+  fmap f (Parser p) = Parser (fmap (first f) . p)
+
+instance Applicative Parser where
+  pure a = Parser (\input -> [(a, input)])
+  Parser lF <*> Parser lA =
+    Parser $ \input -> do
+      (f, rest) <- lF input
+      (a, s) <- lA rest
+      return (f a, s)
+
+instance Alternative Parser where
+  empty = Parser (const [])
+  Parser lA <|> Parser lB =
+    Parser $ \input -> lA input ++ lB input
+
+satisifies :: (Token -> Bool) -> Parser Token
 satisifies p =
   Parser $ \case
     t : ts | p t -> [(t, ts)]
@@ -26,6 +45,28 @@ pluck f =
 
 token :: Token -> Parser Token
 token = satisifies . (==)
+
+sepBy1 :: Parser a -> Parser sep -> Parser [a]
+sepBy1 p sep = liftA2 (:) p (many (sep *> p))
+
+-- tem uma descrição mais extensa da funcionalidade, mas essencialmente
+-- essa função recebe o separador e o parser
+-- ela primeiro pega o primeiro elemento da sequência p e depois gera a maior lista possivel de
+-- tuplas separadores elemento. Com isso, ele merge eles com a operação do sep
+opsL :: Parser (a -> a -> a) -> Parser a -> Parser a
+opsL sep p = liftA2 squash p (many (liftA2 (,) sep p))
+  where
+    squash = foldl' (\acc (combine, a) -> combine acc a)
+
+opsR :: Parser (a -> a -> a) -> Parser a -> Parser a
+opsR sep p = liftA2 squash p (many (liftA2 (,) sep p))
+  where
+    squash start annotated =
+      let (start', annotated') = foldl' shift (start, []) annotated
+          shift (oldStart, stack) (combine, a) = (a, (combine, oldStart) : stack)
+       in foldl' (\acc (combine, a) -> combine a acc) start' annotated'
+
+
 
 varName :: Parser VarName
 varName = 
@@ -48,26 +89,38 @@ number =
 parensed :: Parser a -> Parser a
 parensed p = token OpenParentesis *> p <* token CloseParentesis
 
+emptyParentesis :: Parser [a]
+emptyParentesis = token OpenParentesis *> token CloseParentesis *> Parser (\list -> [([], list)])
+
+tipo :: Parser Tipo
+tipo = base <|>  ponteiro <|> alias 
+    where
+        base = Num <$ token FLexer.Int
+        ponteiro = Ptr <$> (token FLexer.Star *> tipo)
+        alias = AliasT <$> (token FLexer.At *> tipo) <*> (token FLexer.SingleQuote *> number)
 
 functions :: Parser Function
 functions = funcDeclaration <|> funcMain
     where
         funcMain = Main <$> (token FLexer.Let *> token OpenParentesis *> token CloseParentesis *> expr) 
         funcDeclaration = DeclFunc <$> 
-            (token FLexer.Let *> funcName) <*> 
-            (parensed (sepBy1 varName (token Comma)) <|> emptyParentesis) <*>
+            (token FLexer.Fn *> funcName) <*> 
+            (parensed (sepBy1 args (token Comma)) <|> emptyParentesis) <*> 
+            (token Arrow *> tipo) <*>
             expr <*>
             functions
             where 
-                emptyParentesis = token OpenParentesis *> token CloseParentesis *> Parser (\list -> [([], list)])
+                args = (,) <$> varName <*> tipo
 
 expr :: Parser Exp
 expr = binExp
+
 
 binExp :: Parser Exp
 binExp = composeExp
     where 
         composeExp = opsR (PclFront.Comp <$ token FLexer.Semicolon) ifExp
+        --here
 
         ifExp = (PclFront.If <$> 
             (token FLexer.If *> parensed ifExp) <*>
@@ -95,31 +148,42 @@ binExp = composeExp
 
 
 unaryExp :: Parser Exp
-unaryExp = notExp <|> derefExp <|> refExp <|> scopeExp <|> factor
+unaryExp = notExp <|> derefExp <|> refExp <|> aliasExp <|> aliasDerefExp <|> scopeExp <|> factor
     where
         notExp = Not <$> (token Exclamation *> factor)
         derefExp = Deref <$> (token Star *> factor)
         refExp = Ref <$> (token Ampersand *> varName) -- ref só contem nome de var
+        aliasExp = PclFront.Alias <$> (token FLexer.Alias *> varName) -- ref só contem nome de var
+        aliasDerefExp = PclFront.AliasDeref <$> (token FLexer.Alias *> varName) -- ref só contem nome de var
         scopeExp = Scope <$> (token OpenBrace *> expr <* token CloseBrace)
 
 
 factor :: Parser Exp
-factor = declareExp <|> memCalls <|> nullMacro <|> panicMacro <|> callExp <|> nameExp <|> littExp <|> parensed expr
+factor = namedBinOps <|> declareExp <|> memCalls <|> stop <|> nullptr <|> nullalias <|> callExp <|> nameExp <|> littExp <|> parensed expr
     where 
-        declareExp = Pcl.Let <$> (token Lexer.Let *> varName) <*> (token OpenBracket *> number <* token CloseBracket)
+        namedBinOps = increasse <|> decreasse <|> swap <|> swapDeref
+            where
+                increasse = PclFront.Inc <$> varName <*> (token FLexer.Increasse *> expr)
+                decreasse = PclFront.Dec <$> varName <*> (token FLexer.Decreasse *> expr)
+                swap = PclFront.Swap <$> varName <*> (token FLexer.Swap *> varName)
+                swapDeref = PclFront.SwapDeref <$> varName <*> (token FLexer.SwapDeref *> varName)
+
+        declareExp = PclFront.LetVar <$> (token FLexer.Var *> varName) <*> (token Colon *> tipo <* token FLexer.Equal) <*> expr
         memCalls = mallocExp <|> freeExp
             where
-                mallocExp = Pcl.Malloc <$> (token Lexer.Malloc *> parensed expr)
-                freeExp = Pcl.Free <$> 
-                    (token Lexer.Free *> token OpenParentesis *> expr) <*> 
+                mallocExp = PclFront.New <$> (token FLexer.Let *> varName) <*> (token Colon *> tipo <* token FLexer.Equal) <*> (token FLexer.New *> parensed expr)
+                freeExp = PclFront.Delete <$> 
+                    (token FLexer.Delete *> token OpenParentesis *> varName) <*> 
                     (token Comma *> expr <* token CloseParentesis)
 
-        nullMacro = Value (Loc nullLoc) <$ token Lexer.Null
-        panicMacro = Pcl.Panic UserError <$ token Lexer.Panic
+        stop = PclFront.Stop <$ token FLexer.Stop
+        nullptr = PclFront.NullPtr <$> (token FLexer.NullPtr *> token FLexer.Less *> tipo <* token FLexer.Greater)
+        nullalias = PclFront.NullAlias <$> (token FLexer.NullPtr *> token FLexer.Less *> tipo <* token FLexer.Greater)
 
         callExp = CallFunc <$> 
+            (token FLexer.Let *> varName) <*>
+            (token FLexer.Colon *> tipo <* token FLexer.Equal) <*>
             funcName <*> (parensed (sepBy1 expr (token Comma)) <|> emptyParentesis)
-            where emptyParentesis = token OpenParentesis *> token CloseParentesis *> Parser (\list -> [([], list)])
 
         nameExp = PclFront.Var <$> varName 
         littExp = Value . Number <$> number
@@ -129,6 +193,8 @@ factor = declareExp <|> memCalls <|> nullMacro <|> panicMacro <|> callExp <|> na
 -- no meu caso, ao rodar o parser, para cada ;, o parser pode decidir parar
 -- então deve-se filtrar todos os parsers que não terminem. 
 -- tenho que ver o que fazer para isso não acontecer
+
+data ParseError = FailedParse | AmbiguousParse [(Function, [Token])] deriving(Show)
 
 parser :: [Token] -> Either ParseError Function
 parser input = case runParser functions input of
