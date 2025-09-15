@@ -2,13 +2,14 @@
 
 ~~Leia o post [O Modelo de memória de Porcelain](https://sacolle.github.io/blog/) para saber mais.~~
 
-Leia o post [Porcelain - Unsafe Porcelain](https://sacolle.github.io/blog/posts/porcelain-unsafe-porcelain/). Ele contém a vesão mais atualizada da linguagem.
+Leia o post [Porcelain - Unsafe Porcelain](https://sacolle.github.io/blog/posts/porcelain-unsafe-porcelain/). Ele contém a versão mais atualizada da linguagem.
 
 Houveram atualizações no projeto desde o último post e devem ir ao ar quando estiver pronto.
 
 Para rodar, use:
 ```
-cabal run porcelain [step|full] [filename].pcl
+cabal run porcelain compile <inputFile> <outputFile>
+cabal run porcelain execute [step|full] <inputFil>
 ```
 
 
@@ -27,3 +28,7 @@ Dexe-me dizer como eu odeio a desgraça da extensão de haskell no VScode. Ela a
 Não sei, tenho raiva desse porquê.
 
 Enfim, acho q dá pra notar que o meu prazo do TCC da acabando.
+
+##### PS.
+
+Not working rn.
