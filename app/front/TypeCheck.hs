@@ -1,7 +1,7 @@
 {-# LANGUAGE TupleSections #-}
 {-# LANGUAGE LambdaCase #-}
 
-module TypeCheck where
+module TypeCheck (testMain, checkProgram) where
 
 
 import PclFront
@@ -754,6 +754,7 @@ tests = [
     ("5. Base alias in function", ex5, Right Num),
     ("6. Return of function when an associated loan is deleted", ex6, Left $ InvalidAliasAcess emptyEnv),
     ("7. Deref return when scopes dont match", ex7, Left $ InvalidAliasAcess emptyEnv),
+    ("7.1. Deref return when scopes dont match correct", ex7_1, Right Num),
     ("8. Return region of function is insuficient", ex8, Left $ InvalidAliasDeclaration emptyEnv),
     ("9. Return of local adress variable", ex9, Left $ InvalidAliasDeclaration emptyEnv),
     ("10. Assign with ref still in scope", ex10, Right Num),

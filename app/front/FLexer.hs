@@ -113,6 +113,7 @@ token = whiteSpace <|> keyword <|> operators <|> literals <|> names
                     CloseParentesis <$ char ')',
                     Comma <$ char ',',
                     Assign <$ string ":=",
+                    Colon <$ string ":",
                     At <$ char '@',
                     SingleQuote <$ char '\'',
                     Arrow <$ string "->",

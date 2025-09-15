@@ -97,7 +97,7 @@ instance Show Exp where
         Scope expr -> "{\n"++ show expr ++ "\n}"
         New name t expr  -> "let " ++ name ++ ": " ++ show t ++ " = new(" ++ show expr ++ ")" 
         Delete expr1 expr2 -> "delete(" ++ show expr1 ++ ", " ++ show expr2 ++ ")"
-        LetVar name t expr -> "let " ++ name ++ ": " ++ show t ++ " := (" ++ show expr ++ ")"
+        LetVar name t expr -> "var " ++ name ++ ": " ++ show t ++ " := (" ++ show expr ++ ")"
         Assign expr1 expr2 -> show expr1 ++ " := " ++ show expr2 
         Swap expr1 expr2 -> show expr1 ++ " :=: " ++ show expr2 
         SwapDeref expr1 expr2 -> show expr1 ++ " :=:* " ++ show expr2 

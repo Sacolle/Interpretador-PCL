@@ -102,7 +102,7 @@ tipo = base <|>  ponteiro <|> alias
 functions :: Parser Function
 functions = funcDeclaration <|> funcMain
     where
-        funcMain = Main <$> (token FLexer.Let *> token OpenParentesis *> token CloseParentesis *> expr) 
+        funcMain = Main <$> (token FLexer.Fn *> token OpenParentesis *> token CloseParentesis *> expr) 
         funcDeclaration = DeclFunc <$> 
             (token FLexer.Fn *> funcName) <*> 
             (parensed (sepBy1 args (token Comma)) <|> emptyParentesis) <*> 
@@ -154,7 +154,7 @@ unaryExp = notExp <|> derefExp <|> refExp <|> aliasExp <|> aliasDerefExp <|> sco
         derefExp = Deref <$> (token Star *> factor)
         refExp = Ref <$> (token Ampersand *> varName) -- ref só contem nome de var
         aliasExp = PclFront.Alias <$> (token FLexer.Alias *> varName) -- ref só contem nome de var
-        aliasDerefExp = PclFront.AliasDeref <$> (token FLexer.Alias *> varName) -- ref só contem nome de var
+        aliasDerefExp = PclFront.AliasDeref <$> (token FLexer.AliasDeref *> varName) -- ref só contem nome de var
         scopeExp = Scope <$> (token OpenBrace *> expr <* token CloseBrace)
 
 
@@ -168,7 +168,7 @@ factor = namedBinOps <|> declareExp <|> memCalls <|> stop <|> nullptr <|> nullal
                 swap = PclFront.Swap <$> varName <*> (token FLexer.Swap *> varName)
                 swapDeref = PclFront.SwapDeref <$> varName <*> (token FLexer.SwapDeref *> varName)
 
-        declareExp = PclFront.LetVar <$> (token FLexer.Var *> varName) <*> (token Colon *> tipo <* token FLexer.Equal) <*> expr
+        declareExp = PclFront.LetVar <$> (token FLexer.Var *> varName) <*> (token Colon *> tipo <* token FLexer.Assign) <*> expr
         memCalls = mallocExp <|> freeExp
             where
                 mallocExp = PclFront.New <$> (token FLexer.Let *> varName) <*> (token Colon *> tipo <* token FLexer.Equal) <*> (token FLexer.New *> parensed expr)
@@ -178,7 +178,7 @@ factor = namedBinOps <|> declareExp <|> memCalls <|> stop <|> nullptr <|> nullal
 
         stop = PclFront.Stop <$ token FLexer.Stop
         nullptr = PclFront.NullPtr <$> (token FLexer.NullPtr *> token FLexer.Less *> tipo <* token FLexer.Greater)
-        nullalias = PclFront.NullAlias <$> (token FLexer.NullPtr *> token FLexer.Less *> tipo <* token FLexer.Greater)
+        nullalias = PclFront.NullAlias <$> (token FLexer.NullAlias *> token FLexer.Less *> tipo <* token FLexer.Greater)
 
         callExp = CallFunc <$> 
             (token FLexer.Let *> varName) <*>

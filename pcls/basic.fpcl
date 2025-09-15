@@ -1,0 +1,11 @@
+fn () 
+	var y : @int'1 := nullalias<int> ;  1
+	//y := x ; 1
+	/*
+	{
+		//let x : *int = new(1);
+		//y := alias x;
+		delete(x, 1)
+	};
+	*y
+*/
