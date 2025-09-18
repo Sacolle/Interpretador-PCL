@@ -1,3 +1,4 @@
 Func (Main {let y[1];
 y := Loc (Memoria|i0|o0|k0|s0);
-Number 0})
+Number 0;
+Number 1})

@@ -1,0 +1,36 @@
+let ()
+ {let y[1];
+y := NULL;
+0;
+let tmp__0[1];
+tmp__0 := 1;
+let x[1];
+x := malloc(tmp__0);
+tmp__0 := (tmp__0 + 1);
+while( tmp__0 := (tmp__0 - 1);
+(0 < tmp__0) ){
+(x + (tmp__0 - 1)) := NULL
+}
+;
+1;
+let tmp__1[1];
+tmp__1 := 1;
+let z[1];
+z := malloc(tmp__1);
+tmp__1 := (tmp__1 + 1);
+while( tmp__1 := (tmp__1 - 1);
+(0 < tmp__1) ){
+(z + (tmp__1 - 1)) := NULL
+}
+;
+1;
+if(1)
+({{y := x}})
+else ({{y := z}});
+*(y);
+if((x = NULL))
+(0)
+else (free(x, 1));
+if((z = NULL))
+(0)
+else (free(z, 1))}

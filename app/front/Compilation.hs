@@ -80,7 +80,7 @@ compileExp (Front.Scope e) = do
 
 compileExp (Front.New name t e) = do
     n <- get
-    let tmp = "__tmp__" ++ show n
+    let tmp = "tmp__" ++ show n
     put (n + 1)
     be <- compileExp e
     return $ foldr Back.Comp (Back.Value (Back.Number 1)) [
@@ -95,7 +95,7 @@ compileExp (Front.New name t e) = do
                 (Back.Binop Back.Less (Back.Value (Back.Number 0)) (Back.Var tmp))
             ) 
             (Back.Assign 
-                (Back.Binop Back.Add (Back.Var name) (Back.Binop Back.Sub (Back.Var tmp) (Back.Value (Back.Number 1)))) 
+                (Back.Deref (Back.Binop Back.Add (Back.Var name) (Back.Binop Back.Sub (Back.Var tmp) (Back.Value (Back.Number 1)))))
                 (defaultTypeValue t)
             )
         ]
@@ -122,7 +122,7 @@ compileExp (Front.Assign e1 e2) = do
 
 compileExp (Front.Swap name1 name2) = do 
     n <- get
-    let swap = "__swap__" ++ show n
+    let swap = "swap__" ++ show n
     put (n + 1)
     return $ Back.Comp 
         (Back.Let swap 1)
@@ -136,7 +136,7 @@ compileExp (Front.Swap name1 name2) = do
 
 compileExp (Front.SwapDeref name1 name2) = do
     n <- get
-    let swap = "__swap__" ++ show n
+    let swap = "swap__" ++ show n
     put (n + 1)
     return $ Back.Comp 
         (Back.Let swap 1)

@@ -1,0 +1,9 @@
+fn () 
+	(((((var y : @int'1 := nullalias<int>);
+	(let x : *int = new(1)));
+	(let z : *int = new(1)));
+	(if (1) {(y := (alias x)) }
+	else { (y := (alias z)) });
+	(*y));
+	delete(x,1));
+	delete(z,1)

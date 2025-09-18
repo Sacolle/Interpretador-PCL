@@ -1,5 +1,10 @@
 module Pcl where
 
+import GHC.Utils.Misc (dropTail)
+
+concatComma :: Show a => [a] -> String
+concatComma = dropTail 2 . concatMap ((++", ") . show)
+
 type Number = Int
 type VarName = String
 type FuncName = String
@@ -30,7 +35,14 @@ isInBounds LocT{local=_, idx=_, key=_, offset, size} = offset >= 0 && offset < s
 
 
 data Value = Number Number | Loc Loc
-    deriving (Show, Eq)
+    deriving (Eq)
+
+instance Show Value where
+    show (Number n) = show n
+    show (Loc l) = if local l == Memoria && all (== 0) [idx l, key l, offset l, size l] then
+            "NULL"
+        else
+            show l
 
 data Binop = Add | Sub | Mult | Less | Greater | Equal | And | Or 
 
@@ -93,18 +105,27 @@ instance Show Exp where
         Let name num -> "let " ++ name ++ "[" ++ show num ++ "]"
         Assign expr1 expr2 -> show expr1 ++ " := " ++ show expr2 
         If expr1 expr2 expr3 -> "if(" ++ show expr1 ++ ")\n(" ++ show expr2 ++ ")\nelse (" ++ show expr3 ++ ")"
-        While expr1 expr2 -> "while( " ++ show expr1 ++ " )\n" ++ show expr2
+        While expr1 expr2 -> "while( " ++ show expr1 ++ " ){\n" ++ show expr2 ++ "\n}\n"
         CallFunc name exprs -> name ++ "(" ++ 
             Prelude.drop 2 (Prelude.foldl (\acc expr -> acc ++ ", " ++ show expr) "" exprs) 
             ++ ")" 
         Fpop expr -> "Fpop " ++ show expr 
-        Panic kind -> "panic " ++ show kind
-
+        Panic kind ->  case kind of 
+            UserError -> "PANIC"
+            _ -> "panic " ++ show kind
 
 data Function = DeclFunc FuncName [VarName] Exp Function | Main Exp
-    deriving (Show)
+
+instance Show Function where
+    show f = case f of
+        DeclFunc name args body next -> "let " ++ name ++ "(" ++ concatComma args ++ ")\n" ++ show body ++ "\n\n" ++ show next
+        Main body -> "let ()\n " ++ show body
 
 data Global = DeclGlobal VarName Number Global | Func Function
-    deriving (Show)
+
+instance Show Global where
+    show g = case g of
+        DeclGlobal name size next -> "global " ++ name ++ "[" ++ show size ++ "]\n" ++ show next
+        Func f -> show f
 
 type Ast = Global
