@@ -1,0 +1,23 @@
+let mergeSort(list, buff, start, end) {
+	list
+}
+
+
+let () 
+	let list[1];
+	list := malloc(5);
+	*(list + 0) := 7; *(list + 1) := 2; *(list + 2) := 13; *(list + 3) := 4; *(list + 4) := 1; 
+
+	let buffer[1];
+	buffer := malloc(5);
+
+	let sortedList[1];
+	sortedList := mergeSort(list, buffer, 0, 4);
+	free(buffer, 5);
+
+	op(sortedList)
+	free(sortedList);
+
+	usar list //
+
+	0
